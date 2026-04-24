@@ -1,8 +1,4 @@
-/**
- * Comprobantes de pago para cuotas semanales Mi Auto.
- * Conductor sube comprobante por cuota; admin valida o rechaza.
- * Al validar (o pago manual) se aplica el monto a la cuota y se evalúa beneficio 4 cuotas seguidas.
- */
+/** Comprobantes de cuota semanal Mi Auto: alta, validación, conformidad admin, pago manual, bono tiempo. */
 import { query } from '../config/database.js';
 import { uploadFileToMedia } from './voucherService.js';
 import { montoComprobanteCuotaALaMonedaFila, normalizePenUsd, round2 } from './miautoMoneyUtils.js';
@@ -107,10 +103,6 @@ async function persistAplicacionChunks(comprobanteId, solicitudId, chunks) {
   }
 }
 
-/**
- * Aplica hasta `montoMaxAplicar` a la fila usando el mismo pendiente/estado que la API (`cuota_final` derivada),
- * no solo amount_due+late_fee en columnas (evita marcar pagada si la mora en BD iba desfasada).
- */
 async function aplicarPagoACuota(solicitudId, cuotaSemanalId, montoMaxAplicar, ctx) {
   const cu = await query(`SELECT * FROM module_miauto_cuota_semanal WHERE id = $1 AND solicitud_id = $2`, [
     cuotaSemanalId,
@@ -120,7 +112,7 @@ async function aplicarPagoACuota(solicitudId, cuotaSemanalId, montoMaxAplicar, c
   if (!c || (c.status || '').toLowerCase() === 'bonificada') {
     return { newPaid: null, newStatus: null, chunk: 0 };
   }
-  /** `paid` en columna pero saldo derivado > 0 (p. ej. mora+cuota vs abono): permitir abonos extra. */
+  // paid en columna pero saldo derivado > 0: aún se puede abonar
   if ((c.status || '').toLowerCase() === 'paid' && miautoCuotaFinalDerivada(c, ctx) <= 0.005) {
     return { newPaid: null, newStatus: null, chunk: 0 };
   }
@@ -143,10 +135,6 @@ async function aplicarPagoACuota(solicitudId, cuotaSemanalId, montoMaxAplicar, c
   return { newPaid, newStatus, chunk };
 }
 
-/**
- * Reparte `montoAplicar` en PEN: primero la cuota prioritaria (la del comprobante / pago manual),
- * luego el resto en orden due_date ASC. Relee cada fila tras cada aplicación.
- */
 function prefijoMontoCuotaMoneda(monedaFila) {
   const m = String(monedaFila || 'PEN').toUpperCase();
   if (m === 'USD') return 'US$';
@@ -283,13 +271,7 @@ export async function createComprobanteCuotaSemanal(solicitudId, cuotaSemanalId,
   return listBySolicitud(solicitudId);
 }
 
-/**
- * Admin sube comprobante de conformidad del pago (documento oficial para el conductor).
- * - Si se envían `monto` y `moneda` (body multipart): se guardan en el comprobante (cualquier estado de cuota).
- * - Si hay saldo derivado pendiente (aunque la columna `status` sea `paid`) y monto explícito: se acredita el pago (misma lógica que validar comprobante).
- *   Eso **solo** ocurre aquí (ruta admin `comprobantes-conformidad-admin`); el conductor que sube comprobante por `createComprobanteCuotaSemanal` no acredita hasta que staff valide.
- * - Si no hay monto explícito: solo si la cuota está pagada o bonificada; monto = pagado o total a pagar (solo referencia en el PDF).
- */
+/** Conformidad admin: documento oficial; con monto y saldo pendiente acredita en cronograma (el comprobante del conductor no). */
 export async function createComprobanteConformidadAdmin(solicitudId, cuotaSemanalId, file, userId, options = {}) {
   const cuota = await query(`SELECT * FROM module_miauto_cuota_semanal WHERE id = $1 AND solicitud_id = $2`, [
     cuotaSemanalId,
@@ -329,7 +311,6 @@ export async function createComprobanteConformidadAdmin(solicitudId, cuotaSemana
     }
     const totalDue = round2(Number(c.amount_due || 0) + Number(c.late_fee || 0));
     const paid = round2(Number(c.paid_amount || 0));
-    /** Referencia informativa (la columna es NOT NULL); no aplica un pago nuevo. */
     montoVal = paid > 0 ? paid : totalDue;
     monedaVal = normalizePenUsd(c.moneda || 'PEN');
   }
@@ -372,10 +353,8 @@ export async function createComprobanteConformidadAdmin(solicitudId, cuotaSemana
     }
   }
 
-  /** Solo esta función (conformidad admin) acredita al subir; comprobante del conductor sigue pendiente de validación. */
   const debeAcreditarPago = explicitMonto && pendienteDerivado > 0.005 && insertedId != null;
   if (debeAcreditarPago) {
-    /** Misma moneda que `amount_due`/`paid_amount` en BD (p. ej. USD en cuota USD), no solo soles. */
     const montoAplicar = await montoComprobanteCuotaALaMonedaFila(
       solicitudId,
       montoVal,
@@ -512,12 +491,12 @@ export async function rejectComprobanteCuotaSemanal(solicitudId, comprobanteId, 
   return listBySolicitud(solicitudId);
 }
 
-/**
- * Cuenta la racha actual: cuántas cuotas consecutivas desde la más antigua (due_date ASC)
- * están pagadas o bonificadas (la mora en BD puede ser >0 aunque ya esté saldada). Mismo criterio que calcularRacha.
- */
+function ordenarCuotasPorDueAsc(rows) {
+  return [...rows].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+}
+
 function contarRachaConsecutiva(rows) {
-  const porFechaAsc = [...rows].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+  const porFechaAsc = ordenarCuotasPorDueAsc(rows);
   let racha = 0;
   for (const r of porFechaAsc) {
     const st = (r.status || '').toLowerCase();
@@ -530,10 +509,26 @@ function contarRachaConsecutiva(rows) {
 
 const MIN_VIAJES_BONO_TIEMPO = 120;
 
-/**
- * Tras revertir pagos, el contador de cuotas bonificadas por tiempo no puede superar el máximo
- * coherente con la racha actual (misma regla de elegibilidad que tryGrantBenefit4Consecutive).
- */
+/** Bloques de 4 cuotas pagadas seguidas; cada una >= minViajes salvo índice 0 (semana depósito puede ir en 0). */
+function contarBloquesBonificacionTiempoElegibles(rows, racha, minViajes) {
+  if (racha < 4) return 0;
+  const porFechaAsc = ordenarCuotasPorDueAsc(rows);
+  let bloques = 0;
+  for (let start = 0; start + 4 <= racha; start += 4) {
+    const block = porFechaAsc.slice(start, start + 4);
+    const tripsOk = block.every((r, j) => {
+      const globalIdx = start + j;
+      const trips = Number(r.num_viajes) || 0;
+      if (trips >= minViajes) return true;
+      if (globalIdx === 0 && trips === 0) return true;
+      return false;
+    });
+    if (!tripsOk) break;
+    bloques++;
+  }
+  return bloques;
+}
+
 async function clampCuotasBonificadasTrasRevertir(solicitudId) {
   const sol = await query(
     'SELECT cuotas_semanales_bonificadas, cronograma_id FROM module_miauto_solicitud WHERE id = $1',
@@ -548,7 +543,7 @@ async function clampCuotasBonificadasTrasRevertir(solicitudId) {
   if (!crono.rows[0]?.bono_tiempo_activo) return;
 
   const cuotas = await query(
-    `SELECT id, due_date, amount_due, paid_amount, late_fee, status, num_viajes
+    `SELECT due_date, status, num_viajes
      FROM module_miauto_cuota_semanal
      WHERE solicitud_id = $1
      ORDER BY due_date ASC`,
@@ -556,14 +551,7 @@ async function clampCuotasBonificadasTrasRevertir(solicitudId) {
   );
   const rows = cuotas.rows || [];
   const racha = contarRachaConsecutiva(rows);
-  const primerasCuatro = rows.slice(0, 4);
-  const todasCon120 =
-    primerasCuatro.length >= 4 &&
-    primerasCuatro.every((r) => (Number(r.num_viajes) || 0) >= MIN_VIAJES_BONO_TIEMPO);
-  let maxAllowed = 0;
-  if (racha >= 4 && todasCon120) {
-    maxAllowed = Math.floor(racha / 4);
-  }
+  const maxAllowed = contarBloquesBonificacionTiempoElegibles(rows, racha, MIN_VIAJES_BONO_TIEMPO);
   const current = (sol.rows[0] && parseInt(sol.rows[0].cuotas_semanales_bonificadas, 10)) || 0;
   if (current <= maxAllowed) return;
   await query(
@@ -597,11 +585,6 @@ async function revertirPagoPorChunks(solicitudId, chunks) {
   await refreshMoraTrasPagoValidado(solicitudId);
 }
 
-/**
- * Solo concede bono por 4 pagos consecutivos a tiempo cuando el cronograma tiene bono_tiempo_activo.
- * En ese caso, las 4 semanas del bloque deben tener >= 120 viajes cada una.
- * Si bono_tiempo_activo es false, esta regla no se aplica (no se otorga bonificación).
- */
 async function tryGrantBenefit4Consecutive(solicitudId) {
   const sol = await query(
     'SELECT cuotas_semanales_bonificadas, cronograma_id FROM module_miauto_solicitud WHERE id = $1',
@@ -616,7 +599,7 @@ async function tryGrantBenefit4Consecutive(solicitudId) {
   if (!crono.rows[0] || !crono.rows[0].bono_tiempo_activo) return;
 
   const cuotas = await query(
-    `SELECT id, due_date, amount_due, paid_amount, late_fee, status, num_viajes
+    `SELECT due_date, status, num_viajes
      FROM module_miauto_cuota_semanal
      WHERE solicitud_id = $1
      ORDER BY due_date ASC`,
@@ -624,14 +607,10 @@ async function tryGrantBenefit4Consecutive(solicitudId) {
   );
   const rows = cuotas.rows || [];
   const racha = contarRachaConsecutiva(rows);
-  if (racha < 4) return;
-
-  const primerasCuatro = rows.slice(0, 4);
-  const todasCon120 = primerasCuatro.every((r) => (Number(r.num_viajes) || 0) >= MIN_VIAJES_BONO_TIEMPO);
-  if (!todasCon120) return;
+  const deservedBonuses = contarBloquesBonificacionTiempoElegibles(rows, racha, MIN_VIAJES_BONO_TIEMPO);
+  if (deservedBonuses === 0) return;
 
   const current = (sol.rows[0] && parseInt(sol.rows[0].cuotas_semanales_bonificadas, 10)) || 0;
-  const deservedBonuses = Math.floor(racha / 4);
   const toGrant = Math.max(0, deservedBonuses - current);
   if (toGrant === 0) return;
 

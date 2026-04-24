@@ -77,7 +77,9 @@ async function getParkIdByRapidinDriverId(rapidinDriverId) {
 }
 
 function sameFlota(activeParkId, currentParkId) {
-  return activeParkId === currentParkId || (activeParkId == null && currentParkId == null);
+  // Si la solicitud activa no tiene flota asignada (Mi Auto), no restringe por flota
+  if (activeParkId == null) return true;
+  return activeParkId === currentParkId;
 }
 
 /** Si el usuario es conductor, verifica que la solicitud sea suya (por phone + country). Retorna true si OK, false si no. */
