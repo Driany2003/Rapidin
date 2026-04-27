@@ -5,7 +5,7 @@
  * Uso: cd backend && node scripts/miauto-repair-mora-caps-solicitud.js <solicitud_uuid>
  */
 import 'dotenv/config';
-import { persistPaidAmountCapsForSolicitud, updateMoraDiaria } from '../services/miautoCuotaSemanalService.js';
+import { persistPaidAmountCapsForSolicitud, updateMoraDiaria } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const sid = process.argv[2]?.trim();
 if (!sid) {

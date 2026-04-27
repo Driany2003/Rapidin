@@ -12,9 +12,9 @@
  * Para otro conductor: edita SOLICITUD_UUID, DNI_ESPERADO y el array RAW_ROWS.
  */
 import { query } from '../config/database.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 import { mondayOfWeekContainingYmd, computeDueDateForMiAutoCuota } from '../utils/miautoLimaWeekRange.js';
-import { isSemanaDepositoMiAuto } from '../services/miautoCuotaSemanalService.js';
+import { isSemanaDepositoMiAuto } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const SOLICITUD_UUID = '25722f84-4f4e-40f7-9b0c-1f1ce88a2a9a';
 /** DNI solo dígitos (como en el Excel de flota), no confundir con `module_rapidin_drivers.id` (UUID). */

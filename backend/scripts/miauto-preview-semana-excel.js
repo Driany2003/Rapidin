@@ -29,14 +29,14 @@ import {
   computeAmountDueSemanal,
   partnerFeesPlusComisionPool,
   snapshotOrigenFilaTrasCascadaPool,
-} from '../services/miautoCuotaSemanalService.js';
-import { getCronogramaById } from '../services/miautoCronogramaService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
+import { getCronogramaById } from '../yego_miauto/services/miautoCronogramaService.js';
 import {
   round2,
   tipoCambioUsdALocalEfectivo,
   convertirMontoEntreMonedas,
   partnerFeesYangoAMonedaCuota,
-} from '../services/miautoMoneyUtils.js';
+} from '../yego_miauto/services/miautoMoneyUtils.js';
 import {
   getDriverIncome,
   getContractorBalance,

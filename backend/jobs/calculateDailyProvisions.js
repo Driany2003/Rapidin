@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { calculateProvisions } from '../services/analysisService.js';
+import { calculateProvisions } from '../yego_rapidin/services/analysisService.js';
 import { logger } from '../utils/logger.js';
 
 export const startDailyProvisionsJob = () => {

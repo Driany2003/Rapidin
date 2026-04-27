@@ -12,12 +12,12 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { query } from '../config/database.js';
-import { getCronogramasByIds, getMonedaCuotaSemanalPorVehiculo } from '../services/miautoCronogramaService.js';
+import { getCronogramasByIds, getMonedaCuotaSemanalPorVehiculo } from '../yego_miauto/services/miautoCronogramaService.js';
 import {
   getDriverInfoByPhones,
   MIAUTO_PARK_ID,
   normalizePhoneForDriversMatch,
-} from '../services/miautoDriverLookup.js';
+} from '../yego_miauto/services/miautoDriverLookup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

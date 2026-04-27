@@ -4,7 +4,7 @@
  * Uso: node scripts/miauto-ejecutar-cobro-fleet-lunes.js
  */
 import 'dotenv/config';
-import { getCuotasToCharge } from '../services/miautoCuotaSemanalService.js';
+import { getCuotasToCharge } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 import { runFleetCobroSoloSolicitud } from '../jobs/miautoWeeklyCharge.js';
 import { appendMiautoFleetCobroJobAuditEvent } from '../utils/miautoFleetCobroAuditLog.js';
 

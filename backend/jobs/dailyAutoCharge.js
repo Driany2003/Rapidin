@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { query } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { getContractorBalance, withdrawFromContractor } from '../services/yangoService.js';
-import { registerPaymentAuto, updateLoanBalance } from '../services/paymentService.js';
+import { registerPaymentAuto, updateLoanBalance } from '../yego_rapidin/services/paymentService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COBROS_TXT_DIR = path.join(__dirname, '..', 'logs', 'cobros-automaticos');

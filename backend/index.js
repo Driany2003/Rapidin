@@ -88,30 +88,30 @@ app.get('/health', (req, res) => {
 });
 
 import authRoutes from './routes/auth.js';
-import rapidinRoutes from './routes/rapidin.js';
 import yangoRoutes from './routes/yango.js';
-import driverRoutes from './routes/driver.js';
-import loanRequestRoutes from './routes/loanRequests.js';
-import loanSimulationRoutes from './routes/loanSimulation.js';
-import loanRoutes from './routes/loans.js';
-import installmentRoutes from './routes/installments.js';
-import paymentRoutes from './routes/payments.js';
-import voucherRoutes from './routes/vouchers.js';
 import notificationRoutes from './routes/notifications.js';
 import documentRoutes from './routes/documents.js';
-import weeklyAnalysisRoutes from './routes/weeklyAnalysis.js';
-import vintageAnalysisRoutes from './routes/vintageAnalysis.js';
-import paymentBehaviorRoutes from './routes/paymentBehavior.js';
-import executiveKPIsRoutes from './routes/executiveKPIs.js';
-import provisionsRoutes from './routes/provisions.js';
-import portfolioRoutes from './routes/portfolio.js';
 import usersRoutes from './routes/users.js';
-import loanConditionsRoutes from './routes/loanConditions.js';
-import cycleConfigRoutes from './routes/cycleConfig.js';
-import interestRatesRoutes from './routes/interestRates.js';
-import adminLoanRequestRoutes from './routes/adminLoanRequest.js';
-import miautoRoutes from './routes/miauto.js';
-import cobranzasYegoRoutes from './routes/cobranzasYego.js';
+import rapidinRoutes from './yego_rapidin/routes/rapidin.js';
+import driverRoutes from './yego_rapidin/routes/driver.js';
+import loanRequestRoutes from './yego_rapidin/routes/loanRequests.js';
+import loanSimulationRoutes from './yego_rapidin/routes/loanSimulation.js';
+import loanRoutes from './yego_rapidin/routes/loans.js';
+import installmentRoutes from './yego_rapidin/routes/installments.js';
+import paymentRoutes from './yego_rapidin/routes/payments.js';
+import voucherRoutes from './yego_rapidin/routes/vouchers.js';
+import weeklyAnalysisRoutes from './yego_rapidin/routes/weeklyAnalysis.js';
+import vintageAnalysisRoutes from './yego_rapidin/routes/vintageAnalysis.js';
+import paymentBehaviorRoutes from './yego_rapidin/routes/paymentBehavior.js';
+import executiveKPIsRoutes from './yego_rapidin/routes/executiveKPIs.js';
+import provisionsRoutes from './yego_rapidin/routes/provisions.js';
+import portfolioRoutes from './yego_rapidin/routes/portfolio.js';
+import loanConditionsRoutes from './yego_rapidin/routes/loanConditions.js';
+import cycleConfigRoutes from './yego_rapidin/routes/cycleConfig.js';
+import interestRatesRoutes from './yego_rapidin/routes/interestRates.js';
+import adminLoanRequestRoutes from './yego_rapidin/routes/adminLoanRequest.js';
+import cobranzasYegoRoutes from './yego_rapidin/routes/cobranzasYego.js';
+import miautoRoutes from './yego_miauto/routes/miauto.js';
 
 app.use('/api/auth', authRoutes); // authLimiter deshabilitado temporalmente
 app.use('/api/rapidin', rapidinRoutes); // publicLimiter deshabilitado temporalmente

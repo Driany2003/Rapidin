@@ -1,6 +1,6 @@
 /** Alinea 1.ª cuota con fecha_inicio; opcional --fecha YYYY-MM-DD. Uso: node scripts/miauto-realign-primera-cuota-deposito.js <uuid> [--fecha ...] */
 import 'dotenv/config';
-import { realignPrimeraCuotaDepositoDesdeFechaInicio } from '../services/miautoCuotaSemanalService.js';
+import { realignPrimeraCuotaDepositoDesdeFechaInicio } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 function parseArgs(argv) {
   const args = argv.slice(2);

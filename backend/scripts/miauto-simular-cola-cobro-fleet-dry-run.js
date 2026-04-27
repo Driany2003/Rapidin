@@ -19,14 +19,14 @@
  */
 import 'dotenv/config';
 import { query } from '../config/database.js';
-import { MIAUTO_PARK_ID } from '../services/miautoDriverLookup.js';
+import { MIAUTO_PARK_ID } from '../yego_miauto/services/miautoDriverLookup.js';
 import {
   getCuotasSemanalesConRacha,
   getCuotasToCharge,
   getCuotasToChargeForSolicitud,
   processCobroCuota,
-} from '../services/miautoCuotaSemanalService.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 import { fleetCookieCobroForMiAuto, fleetParkIdForMiAuto, getContractorBalance } from '../services/yangoService.js';
 import {
   currentMondayCuotaContext,

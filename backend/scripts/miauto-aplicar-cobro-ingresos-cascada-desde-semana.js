@@ -18,7 +18,7 @@
  *   node scripts/... <uuid> 32 56.76 07687147
  */
 import { query } from '../config/database.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 import {
   applyPartnerFeesWaterfallToSolicitud,
   cascadaDestinoExcluirCuotaOrigen,
@@ -27,7 +27,7 @@ import {
   persistPaidAmountCapsForSolicitud,
   snapshotOrigenFilaTrasCascadaPool,
   updateMoraDiaria,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 function digitsOnly(s) {
   return String(s || '').replace(/\D/g, '');

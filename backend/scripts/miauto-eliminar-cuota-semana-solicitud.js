@@ -14,7 +14,7 @@ import {
   parsePartnerFeesCascadaDestinoDb,
   updateMoraDiaria,
   persistPaidAmountCapsForSolicitud,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const argv = process.argv.slice(2);
 const apply = argv.includes('--apply');

@@ -59,7 +59,7 @@ async function main() {
   const sids = [...new Set(rows.map((r) => String(r.solicitud_id)).filter(Boolean))];
 
   const persistErrors = [];
-  const { persistPaidAmountCapsForSolicitud } = await import('../services/miautoCuotaSemanalService.js');
+  const { persistPaidAmountCapsForSolicitud } = await import('../yego_miauto/services/miautoCuotaSemanalService.js');
   for (const sid of sids) {
     try {
       await persistPaidAmountCapsForSolicitud(sid);

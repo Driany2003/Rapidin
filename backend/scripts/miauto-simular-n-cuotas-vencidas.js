@@ -17,7 +17,7 @@ import {
   persistPaidAmountCapsForSolicitud,
   processCobroCuota,
   updateMoraDiaria,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 function ymd(v) {
   if (v == null) return null;

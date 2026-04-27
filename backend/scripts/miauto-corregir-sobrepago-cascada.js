@@ -15,8 +15,8 @@ import {
   parsePartnerFeesCascadaDestinoDb,
   updateMoraDiaria,
   persistPaidAmountCapsForSolicitud,
-} from '../services/miautoCuotaSemanalService.js';
-import { getCronogramaById } from '../services/miautoCronogramaService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
+import { getCronogramaById } from '../yego_miauto/services/miautoCronogramaService.js';
 
 const PARTNER_FEES_PCT = 0.8333;
 function round2(n) { return Math.round(n * 100) / 100; }

@@ -8,7 +8,7 @@
  *
  * Requiere .env con DATABASE_URL (o la misma config que el API).
  */
-import { getCuotasSemanalesConRacha } from '../services/miautoCuotaSemanalService.js';
+import { getCuotasSemanalesConRacha } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 /** YYYY-MM-DD desde `Date`, ISO string o valor de BD. */
 function weekStartYmd(v) {

@@ -10,9 +10,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import XLSX from 'xlsx';
 import { query } from '../config/database.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 import { mondayOfWeekContainingYmd, computeDueDateForMiAutoCuota } from '../utils/miautoLimaWeekRange.js';
-import { isSemanaDepositoMiAuto, persistPaidAmountCapsForSolicitud } from '../services/miautoCuotaSemanalService.js';
+import { isSemanaDepositoMiAuto, persistPaidAmountCapsForSolicitud } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SHEET_NAME = 'Cuotas Semanales';

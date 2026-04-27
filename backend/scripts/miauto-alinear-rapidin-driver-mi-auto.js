@@ -1,14 +1,20 @@
 /**
- * Solo actualiza `module_miauto_solicitud`.
- * Busca en `drivers` (Yego Mi Auto, working, teléfono alineado a la solicitud) y guarda
- * `drivers.driver_id` (contractor Yango) en `rapidin_driver_id`. Requiere FK eliminada en BD.
- * Uso:
+ * Solo actualiza `module_miauto_solicitud.rapidin_driver_id`.
+ * Busca en `drivers` (Yego Mi Auto park, work_status=working) el `driver_id` Yango y lo guarda como UUID en `rapidin_driver_id`.
+ *
+ * Uso (una solicitud / DNI — igual que antes):
  *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js <dni>
- *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js <solicitud_uuid>   (solo esa fila: match por teléfono en drivers Mi Auto; DNI opcional)
+ *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js <solicitud_uuid>
  *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js <dni> <solicitud_uuid>
+ *
+ * Uso (lote — todas las solicitudes sin rapidin_driver_id):
+ *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js --sin-rapidin --dry-run
+ *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js --sin-rapidin
+ *
+ * Match: primero teléfono (mismo criterio que antes); si no hay match, DNI vs drivers.document_number.
  */
 import { query } from '../config/database.js';
-import { MIAUTO_PARK_ID, normalizePhoneForDriversMatch } from '../services/miautoDriverLookup.js';
+import { MIAUTO_PARK_ID, normalizePhoneForDriversMatch } from '../yego_miauto/services/miautoDriverLookup.js';
 
 function digitsOnly(s) {
   return String(s || '').replace(/\D/g, '');
@@ -62,13 +68,134 @@ async function findFlotaDriverByPhone(phone) {
   return res.rows[0] || null;
 }
 
-async function main() {
-  const arg1 = process.argv[2] || '08872540';
-  const arg2 = process.argv[3];
+async function findFlotaDriverByDni(dniDigits) {
+  const d = digitsOnly(dniDigits);
+  if (!d || d.length < 4) return null;
+  const res = await query(
+    `SELECT driver_id, park_id, document_number, first_name, last_name, license_number, phone
+     FROM drivers d
+     WHERE d.park_id = $1
+       AND d.work_status = 'working'
+       AND d.park_id IS NOT NULL
+       AND REGEXP_REPLACE(COALESCE(d.document_number, ''), '[^0-9]', '', 'g') = $2
+     ORDER BY d.driver_id::text
+     LIMIT 1`,
+    [MIAUTO_PARK_ID, d]
+  );
+  return res.rows[0] || null;
+}
+
+async function resolveFlotaForSolicitud(row) {
+  const phone = row.phone != null && String(row.phone).trim() !== '' ? row.phone : null;
+  const dniDigits = digitsOnly(row.dni);
+  if (phone) {
+    const byPhone = await findFlotaDriverByPhone(phone);
+    if (byPhone) return { flota: byPhone, via: 'phone' };
+  }
+  if (dniDigits.length >= 4) {
+    const byDni = await findFlotaDriverByDni(dniDigits);
+    if (byDni) return { flota: byDni, via: 'dni' };
+  }
+  return { flota: null, via: null };
+}
+
+async function applyRapidinDriverToSolicitudId(solicitudId, uuidText, dryRun) {
+  if (dryRun) return true;
+  const upd = await query(
+    `UPDATE module_miauto_solicitud
+     SET rapidin_driver_id = $1::uuid, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2::uuid
+     RETURNING id`,
+    [uuidText, solicitudId]
+  );
+  return (upd.rows || []).length > 0;
+}
+
+async function mainBatch() {
+  const argv = process.argv.slice(2);
+  const dryRun = argv.includes('--dry-run');
+  const res = await query(
+    `SELECT id, country, dni, phone, rapidin_driver_id
+     FROM module_miauto_solicitud
+     WHERE rapidin_driver_id IS NULL
+       AND (
+         (phone IS NOT NULL AND TRIM(phone) <> '')
+         OR (REGEXP_REPLACE(COALESCE(dni, ''), '[^0-9]', '', 'g') <> '' AND LENGTH(REGEXP_REPLACE(COALESCE(dni, ''), '[^0-9]', '', 'g')) >= 4)
+       )
+     ORDER BY created_at ASC NULLS LAST`
+  );
+  const rows = res.rows || [];
+  const stats = {
+    total: rows.length,
+    actualizadas: 0,
+    sin_match: 0,
+    driver_id_invalido: 0,
+    dryRun,
+    park_id: MIAUTO_PARK_ID,
+    detalle_sin_match: [],
+  };
+
+  for (const row of rows) {
+    const { flota, via } = await resolveFlotaForSolicitud(row);
+    if (!flota) {
+      stats.sin_match++;
+      if (stats.detalle_sin_match.length < 80) {
+        stats.detalle_sin_match.push({
+          id: row.id,
+          phone: row.phone || null,
+          dni: row.dni || null,
+        });
+      }
+      continue;
+    }
+    const rawId = flota.driver_id;
+    if (rawId == null || String(rawId).trim() === '') {
+      stats.driver_id_invalido++;
+      continue;
+    }
+    const uuidText = fleetDriverIdToUuidText(rawId);
+    if (!uuidText) {
+      stats.driver_id_invalido++;
+      if (stats.detalle_sin_match.length < 80) {
+        stats.detalle_sin_match.push({
+          id: row.id,
+          msg: 'driver_id no UUID 32 hex',
+          raw: String(rawId),
+        });
+      }
+      continue;
+    }
+    const ok = await applyRapidinDriverToSolicitudId(row.id, uuidText, dryRun);
+    if (ok) {
+      stats.actualizadas++;
+      console.log(
+        `[${dryRun ? 'DRY' : 'OK'}] ${row.id} via=${via} driver=${uuidText} doc_flota=${flota.document_number || ''} phone_flota=${flota.phone || ''}`
+      );
+    }
+  }
+
+  console.log(JSON.stringify(stats, null, 2));
+  process.exit(0);
+}
+
+async function mainSingle() {
+  const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+  const arg1 = argv[0];
+  const arg2 = argv[1];
+
+  if (!arg1) {
+    console.error(
+      'Uso:\n' +
+        '  node scripts/miauto-alinear-rapidin-driver-mi-auto.js <dni>\n' +
+        '  node scripts/miauto-alinear-rapidin-driver-mi-auto.js <solicitud_uuid>\n' +
+        '  node scripts/miauto-alinear-rapidin-driver-mi-auto.js <dni> <solicitud_uuid>\n' +
+        '  node scripts/miauto-alinear-rapidin-driver-mi-auto.js --sin-rapidin [--dry-run]'
+    );
+    process.exit(1);
+  }
 
   let dniTarget;
   let solicitudIdFilter = null;
-  /** Solo UUID en argv[2]: se busca conductor en `drivers` por el teléfono de la solicitud (no hace falta DNI). */
   let alinearSoloPorTelefonoSolicitud = false;
 
   if (isUuidArg(arg1) && !arg2) {
@@ -86,7 +213,7 @@ async function main() {
     }
     dniTarget = digitsOnly(row.dni);
     if (!dniTarget) {
-      console.warn('Aviso: solicitud sin DNI en fila; se usa solo teléfono vs `drivers` (park Yego Mi Auto, working).');
+      console.warn('Aviso: solicitud sin DNI en fila; se usa teléfono y/o DNI vs `drivers`.');
     }
   } else {
     dniTarget = digitsOnly(arg1);
@@ -94,7 +221,7 @@ async function main() {
   }
 
   if (!dniTarget && !alinearSoloPorTelefonoSolicitud) {
-    console.error('DNI vacío');
+    console.error('DNI vacío (modo por DNI). Usa UUID de solicitud solo para modo por teléfono de esa fila.');
     process.exit(1);
   }
 
@@ -135,19 +262,14 @@ async function main() {
     process.exit(0);
   }
 
-  const phone = solicitudes.map((s) => s.phone).find((p) => p != null && String(p).trim() !== '');
-  if (!phone) {
-    console.error('Ninguna solicitud con este DNI tiene teléfono; no se puede buscar en drivers.');
-    process.exit(1);
-  }
-
-  const flota = await findFlotaDriverByPhone(phone);
+  const row0 = solicitudes[0];
+  const { flota, via } = await resolveFlotaForSolicitud(row0);
   if (!flota) {
     console.error(
-      'No se encontró conductor en `drivers` con park Yego Mi Auto, work_status=working y teléfono alineado a:',
-      phone,
-      '| park esperado:',
-      MIAUTO_PARK_ID
+      'No se encontró conductor en `drivers` (park Mi Auto, working) por teléfono ni DNI. Tel:',
+      row0.phone,
+      'DNI:',
+      row0.dni
     );
     process.exit(1);
   }
@@ -163,36 +285,49 @@ async function main() {
     process.exit(1);
   }
 
-  const updSol = solicitudIdFilter
-    ? await query(
-        `UPDATE module_miauto_solicitud
-         SET rapidin_driver_id = $1::uuid, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2::uuid
-         RETURNING id`,
-        [uuidText, solicitudIdFilter]
-      )
-    : await query(
-        `UPDATE module_miauto_solicitud
-         SET rapidin_driver_id = $1::uuid, updated_at = CURRENT_TIMESTAMP
-         WHERE REGEXP_REPLACE(COALESCE(dni, ''), '[^0-9]', '', 'g') = $2
-         RETURNING id`,
-        [uuidText, dniTarget]
-      );
-  const ids = (updSol.rows || []).map((r) => r.id);
-  if (ids.length === 0) {
-    console.error(
-      `UPDATE no afectó filas: el DNI normalizado (solo dígitos) "${dniTarget}" no coincide con ninguna solicitud. En SQL compara con REGEXP_REPLACE(COALESCE(dni,''),'[^0-9]','','g') = '${dniTarget}'.`
+  const idsToUpdate = solicitudIdFilter
+    ? [solicitudIdFilter]
+    : solicitudes.map((s) => s.id);
+  const ids = [];
+  for (const sid of idsToUpdate) {
+    const updSol = await query(
+      `UPDATE module_miauto_solicitud
+       SET rapidin_driver_id = $1::uuid, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2::uuid
+       RETURNING id`,
+      [uuidText, sid]
     );
+    ids.push(...(updSol.rows || []).map((r) => r.id));
+  }
+
+  if (ids.length === 0) {
+    console.error('UPDATE no afectó filas.');
     process.exit(1);
   }
 
-  console.log(JSON.stringify({
-    dni: dniTarget || null,
-    yego_drivers_driver_id: uuidText,
-    flota_park_id: String(flota.park_id ?? '').trim(),
-    solicitudes_actualizadas: ids,
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        dni: dniTarget || null,
+        match_via: via,
+        yego_drivers_driver_id: uuidText,
+        flota_park_id: String(flota.park_id ?? '').trim(),
+        solicitudes_actualizadas: ids,
+      },
+      null,
+      2
+    )
+  );
   process.exit(0);
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--sin-rapidin') || argv.includes('--all')) {
+    await mainBatch();
+    return;
+  }
+  await mainSingle();
 }
 
 main().catch((e) => {

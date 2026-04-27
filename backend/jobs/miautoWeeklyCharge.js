@@ -4,7 +4,7 @@
  */
 import cron from 'node-cron';
 import { logger } from '../utils/logger.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 import {
   getContractorBalance,
   fleetCookieCobroForMiAuto,
@@ -22,7 +22,7 @@ import {
   processCobroCuota,
   updateMoraDiaria,
   effectiveAmountDueForMiAutoFleetRowAsync,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 import {
   addDaysYmd,
   getPreviousWeekIncomeRangeLima,

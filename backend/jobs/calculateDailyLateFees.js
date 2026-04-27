@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { query } from '../config/database.js';
 import { logger } from '../utils/logger.js';
-import { updateLoanBalance } from '../services/paymentService.js';
+import { updateLoanBalance } from '../yego_rapidin/services/paymentService.js';
 
 async function runLateFeesUpdate() {
   // Cuotas no pagadas y vencidas (pending u overdue): recalculamos mora cada día para que incremente.

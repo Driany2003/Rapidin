@@ -18,12 +18,12 @@ import { query } from '../config/database.js';
 import {
   getCuotasToCharge,
   effectiveAmountDueForMiAutoFleetRowAsync,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 import {
   round2,
   tipoCambioUsdALocalEfectivo,
   convertirMontoEntreMonedas,
-} from '../services/miautoMoneyUtils.js';
+} from '../yego_miauto/services/miautoMoneyUtils.js';
 import {
   getContractorBalance,
   fleetCookieCobroForMiAuto,

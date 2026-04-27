@@ -6,8 +6,8 @@
  *   node scripts/miauto-restaurar-pagado-menos-mora.js [--cutoff-date YYYY-MM-DD]
  */
 import { query } from '../config/database.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
-import { persistPaidAmountCapsForSolicitud } from '../services/miautoCuotaSemanalService.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
+import { persistPaidAmountCapsForSolicitud } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const DEFAULT_CUTOFF = '2026-03-30';
 

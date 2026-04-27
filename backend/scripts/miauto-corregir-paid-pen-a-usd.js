@@ -15,8 +15,8 @@ import {
   convertirMontoEntreMonedas,
   round2,
   tipoCambioUsdALocalEfectivo,
-} from '../services/miautoMoneyUtils.js';
-import { updateMoraDiaria } from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoMoneyUtils.js';
+import { updateMoraDiaria } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 function digitsOnly(s) {
   return String(s || '').replace(/\D/g, '');

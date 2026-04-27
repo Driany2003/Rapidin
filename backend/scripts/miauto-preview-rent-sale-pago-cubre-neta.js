@@ -10,7 +10,7 @@
  */
 import 'dotenv/config';
 import { query } from '../config/database.js';
-import { getCronogramaById } from '../services/miautoCronogramaService.js';
+import { getCronogramaById } from '../yego_miauto/services/miautoCronogramaService.js';
 import {
   resolveMontosPlanCuotaSemanalCore,
   paidIgualProgramadaIgnoraMoraDerivada,
@@ -18,9 +18,9 @@ import {
   updateMoraDiaria,
   persistPaidAmountCapsForSolicitud,
   isSemanaDepositoMiAuto,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 import { isWeekYangoClosedForMiAutoCuotaMetrics } from '../utils/miautoLimaWeekRange.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 
 function ymdFromDbDate(v) {
   if (v == null) return null;

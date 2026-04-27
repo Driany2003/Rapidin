@@ -22,8 +22,8 @@ import {
   limaWeekStartToMiAutoIncomeRange,
   mondayOfWeekContainingYmd,
 } from '../utils/miautoLimaWeekRange.js';
-import { MIAUTO_PARK_ID } from '../services/miautoDriverLookup.js';
-import { getCronogramaById } from '../services/miautoCronogramaService.js';
+import { MIAUTO_PARK_ID } from '../yego_miauto/services/miautoDriverLookup.js';
+import { getCronogramaById } from '../yego_miauto/services/miautoCronogramaService.js';
 import { getDriverIncome, fleetParkIdForMiAuto } from '../services/yangoService.js';
 import {
   isSemanaDepositoMiAuto,
@@ -31,8 +31,8 @@ import {
   computeAmountDueSemanal,
   partnerFeesPlusComisionPool,
   snapshotOrigenFilaTrasCascadaPool,
-} from '../services/miautoCuotaSemanalService.js';
-import { partnerFeesYangoAMonedaCuota, round2 } from '../services/miautoMoneyUtils.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
+import { partnerFeesYangoAMonedaCuota, round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 
 const PARTNER_FEES_PCT = 0.8333;
 

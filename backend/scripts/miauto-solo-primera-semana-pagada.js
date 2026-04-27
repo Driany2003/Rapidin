@@ -9,8 +9,8 @@
 import 'dotenv/config';
 import { query } from '../config/database.js';
 import { getLimaYmd } from '../utils/miautoLimaWeekRange.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
-import { persistPaidAmountCapsForSolicitud, updateMoraDiaria } from '../services/miautoCuotaSemanalService.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
+import { persistPaidAmountCapsForSolicitud, updateMoraDiaria } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 function ymd(v) {
   if (v == null) return null;

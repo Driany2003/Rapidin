@@ -19,7 +19,7 @@ import {
   persistPaidAmountCapsForSolicitud,
   processCobroCuota,
   updateMoraDiaria,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 function parseArgs(argv) {
   const args = argv.slice(2);

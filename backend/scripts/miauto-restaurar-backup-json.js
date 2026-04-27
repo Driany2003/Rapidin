@@ -17,7 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getClient } from '../config/database.js';
-import { updateMoraDiaria, persistPaidAmountCapsForSolicitud } from '../services/miautoCuotaSemanalService.js';
+import { updateMoraDiaria, persistPaidAmountCapsForSolicitud } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

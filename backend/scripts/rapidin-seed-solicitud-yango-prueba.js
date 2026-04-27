@@ -9,8 +9,8 @@
  */
 import 'dotenv/config';
 import { query } from '../config/database.js';
-import { createLoanRequest } from '../services/loanService.js';
-import { simulateLoanOptions } from '../services/calculationsService.js';
+import { createLoanRequest } from '../yego_rapidin/services/loanService.js';
+import { simulateLoanOptions } from '../yego_rapidin/services/calculationsService.js';
 
 function parseArgs(argv) {
   const out = { dni: '77221246', country: 'PE', amount: 500 };

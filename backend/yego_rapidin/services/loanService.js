@@ -1,0 +1,746 @@
+import { query } from '../../config/database.js';
+import { buildDriverNameSearchSql } from '../../utils/driverNameSearch.js';
+import { getCreditLine, getInterestRate, simulateLoanOptions, generateInstallmentSchedule } from './calculationsService.js';
+import { getNextMondayFrom, isSunday } from '../../utils/helpers.js';
+import { logger } from '../../utils/logger.js';
+
+export const createLoanRequest = async (data, userId = null, options = {}) => {
+  const { driver_id, country, requested_amount, observations } = data;
+  const createdByAdmin = options.createdByAdmin === true;
+
+  // El flujo del conductor: no puede tener préstamo activo ni solicitud en proceso. El admin puede crear otra solicitud igual.
+  if (!createdByAdmin) {
+    // Verificar si el conductor tiene un préstamo activo. Solo bloquear si la última fecha del cronograma aún no ha pasado (aunque haya adelantado pagos).
+    const activeLoan = await query(
+      `SELECT l.id, l.status, MAX(i.due_date) as last_schedule_due_date
+       FROM module_rapidin_loans l
+       LEFT JOIN module_rapidin_installments i ON i.loan_id = l.id
+       WHERE l.driver_id = $1 AND l.status = 'active'
+       GROUP BY l.id, l.status
+       LIMIT 1`,
+      [driver_id]
+    );
+
+    if (activeLoan.rows.length > 0) {
+      const lastScheduleDueDate = activeLoan.rows[0].last_schedule_due_date;
+      if (lastScheduleDueDate) {
+        const lastDate = new Date(lastScheduleDueDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        lastDate.setHours(0, 0, 0, 0);
+        if (lastDate > today) {
+          const fechaStr = lastDate.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
+          throw new Error(`Debes esperar hasta el ${fechaStr} (última fecha de tu cronograma) para solicitar un nuevo préstamo. Aunque hayas adelantado tus pagos, podrás solicitar a partir de esa fecha.`);
+        }
+      } else {
+        throw new Error('Ya tienes un préstamo activo. Debes completar o cancelar tu préstamo actual antes de solicitar uno nuevo.');
+      }
+    }
+
+    // Si tiene préstamo cancelado pero la última fecha del cronograma aún no ha llegado (pagó adelantado), debe esperar
+    const cancelledWithFutureDate = await query(
+      `SELECT MAX(i.due_date) as last_schedule_due_date
+       FROM module_rapidin_loans l
+       JOIN module_rapidin_installments i ON i.loan_id = l.id
+       WHERE l.driver_id = $1 AND l.status = 'cancelled'
+       GROUP BY l.id
+       HAVING MAX(i.due_date) > CURRENT_DATE
+       LIMIT 1`,
+      [driver_id]
+    );
+    if (cancelledWithFutureDate.rows.length > 0 && cancelledWithFutureDate.rows[0].last_schedule_due_date) {
+      const lastDate = new Date(cancelledWithFutureDate.rows[0].last_schedule_due_date);
+      const fechaStr = lastDate.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
+      throw new Error(`No puedes solicitar un nuevo préstamo hasta cumplir la última fecha de tu cronograma. Podrás solicitar a partir del ${fechaStr}.`);
+    }
+
+    // Verificar si el conductor tiene una solicitud que bloquea (disbursed con préstamo cancelado no bloquea)
+    const pendingRequest = await query(
+      `SELECT r.id, r.status 
+       FROM module_rapidin_loan_requests r
+       LEFT JOIN module_rapidin_loans l ON l.request_id = r.id
+       WHERE r.driver_id = $1 
+         AND (
+           r.status IN ('pending', 'approved', 'signed')
+           OR (r.status = 'disbursed' AND (l.id IS NULL OR l.status != 'cancelled'))
+         )
+       LIMIT 1`,
+      [driver_id]
+    );
+
+    if (pendingRequest.rows.length > 0) {
+      const status = pendingRequest.rows[0].status;
+      const statusMessages = {
+        'pending': 'Ya tienes una solicitud de préstamo pendiente. Espera a que sea procesada.',
+        'approved': 'Ya tienes una solicitud de préstamo aprobada. Completa el proceso actual antes de solicitar uno nuevo.',
+        'signed': 'Ya tienes una solicitud de préstamo firmada. Completa el proceso actual antes de solicitar uno nuevo.',
+        'disbursed': 'Ya tienes una solicitud de préstamo desembolsada. Completa el proceso actual antes de solicitar uno nuevo.'
+      };
+      throw new Error(statusMessages[status] || 'Ya tienes una solicitud de préstamo en proceso.');
+    }
+  }
+
+  // Solo el flujo conductor debe respetar la línea de crédito por ciclo; el admin puede crear solicitudes por montos mayores.
+  if (!createdByAdmin) {
+    const creditLine = await getCreditLine(driver_id, country);
+    if (requested_amount > creditLine) {
+      throw new Error(`El monto solicitado excede la línea de crédito disponible (${creditLine})`);
+    }
+  }
+
+  // Ciclo del conductor al momento de crear la solicitud (para tasa y condiciones correctas al desembolsar)
+  const driverRow = await query(
+    'SELECT COALESCE(cycle, 1) AS cycle FROM module_rapidin_drivers WHERE id = $1',
+    [driver_id]
+  );
+  const cycle = driverRow.rows.length > 0 ? Math.max(1, parseInt(driverRow.rows[0].cycle, 10) || 1) : 1;
+
+  const result = await query(
+    `INSERT INTO module_rapidin_loan_requests 
+     (driver_id, country, requested_amount, status, observations, created_by, cycle)
+     VALUES ($1, $2, $3, 'pending', $4, $5, $6)
+     RETURNING *`,
+    [driver_id, country, requested_amount, observations, userId, cycle]
+  );
+
+  return result.rows[0];
+};
+
+export const getLoanRequests = async (filters = {}) => {
+  let sql = `
+    SELECT r.*,
+           COALESCE(r.cycle, 1) AS cycle,
+           l.disbursed_amount AS disbursed_amount,
+           l.disbursed_at AS disbursed_at,
+           (CASE WHEN l.disbursed_at IS NOT NULL AND r.country = 'PE' THEN (l.disbursed_at AT TIME ZONE 'America/Lima')::date::text
+                 WHEN l.disbursed_at IS NOT NULL AND r.country = 'CO' THEN (l.disbursed_at AT TIME ZONE 'America/Bogota')::date::text
+                 WHEN l.disbursed_at IS NOT NULL THEN (l.disbursed_at AT TIME ZONE 'UTC')::date::text END) AS disbursed_at_display,
+           d.dni, d.first_name as driver_first_name, d.last_name as driver_last_name,
+           d.cycle AS driver_cycle,
+           u.first_name as created_by_first_name
+    FROM module_rapidin_loan_requests r
+    LEFT JOIN module_rapidin_loans l ON l.request_id = r.id
+    LEFT JOIN module_rapidin_drivers d ON d.id = r.driver_id
+    LEFT JOIN module_rapidin_users u ON u.id = r.created_by
+    WHERE 1=1
+  `;
+  const params = [];
+  let paramCount = 1;
+
+  if (filters.status) {
+    sql += ` AND r.status = $${paramCount++}`;
+    params.push(filters.status);
+  }
+
+  if (filters.country) {
+    sql += ` AND r.country = $${paramCount++}`;
+    params.push(filters.country);
+  }
+
+  if (filters.driver_id) {
+    sql += ` AND r.driver_id = $${paramCount++}`;
+    params.push(filters.driver_id);
+  }
+
+  if (filters.driver && filters.driver.trim()) {
+    const dSearch = buildDriverNameSearchSql('d', filters.driver, paramCount);
+    if (dSearch.sql) {
+      sql += dSearch.sql;
+      params.push(...dSearch.params);
+      paramCount = dSearch.nextParam;
+    }
+  }
+
+  if (filters.date_from && filters.date_to) {
+    const tz = filters.date_tz || 'UTC';
+    sql += ` AND (
+      ((r.created_at AT TIME ZONE $${paramCount})::date >= $${paramCount + 1} AND (r.created_at AT TIME ZONE $${paramCount})::date <= $${paramCount + 2})
+      OR (r.approved_at IS NOT NULL AND (r.approved_at AT TIME ZONE $${paramCount})::date >= $${paramCount + 1} AND (r.approved_at AT TIME ZONE $${paramCount})::date <= $${paramCount + 2})
+      OR (l.disbursed_at IS NOT NULL AND (l.disbursed_at AT TIME ZONE $${paramCount})::date >= $${paramCount + 1} AND (l.disbursed_at AT TIME ZONE $${paramCount})::date <= $${paramCount + 2})
+    )`;
+    params.push(tz, filters.date_from, filters.date_to);
+    paramCount += 3;
+  }
+
+  sql += ` ORDER BY r.created_at DESC`;
+
+  if (filters.limit != null) {
+    const fromWhere = sql.substring(sql.indexOf('FROM'), sql.indexOf('ORDER BY'));
+    const countResult = await query('SELECT COUNT(*)::int AS total ' + fromWhere, params);
+    const total = countResult.rows[0]?.total ?? 0;
+    sql += ` LIMIT $${paramCount++}`;
+    params.push(filters.limit);
+    if (filters.offset != null) {
+      sql += ` OFFSET $${paramCount++}`;
+      params.push(filters.offset);
+    }
+    const result = await query(sql, params);
+    return { data: result.rows, total };
+  }
+
+  if (filters.offset != null) {
+    sql += ` OFFSET $${paramCount++}`;
+    params.push(filters.offset);
+  }
+
+  const result = await query(sql, params);
+  return result.rows;
+};
+
+export const getLoanRequestById = async (id) => {
+  const result = await query(
+    `SELECT r.*,
+            COALESCE(r.cycle, 1) AS cycle,
+            d.dni, d.first_name as driver_first_name, d.last_name as driver_last_name, d.phone, d.email, d.cycle as driver_cycle,
+            u.first_name as created_by_first_name
+     FROM module_rapidin_loan_requests r
+     LEFT JOIN module_rapidin_drivers d ON d.id = r.driver_id
+     LEFT JOIN module_rapidin_users u ON u.id = r.created_by
+     WHERE r.id = $1`,
+    [id]
+  );
+
+  return result.rows[0] || null;
+};
+
+export const rejectLoanRequest = async (id, reason, userId) => {
+  await query(
+    `UPDATE module_rapidin_loan_requests 
+     SET status = 'rejected', rejection_reason = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP
+     WHERE id = $3`,
+    [reason, userId, id]
+  );
+
+  return await getLoanRequestById(id);
+};
+
+export const applySimulationOption = async (requestId, option, userId) => {
+  const request = await getLoanRequestById(requestId);
+
+  if (!request) {
+    throw new Error('Solicitud no encontrada');
+  }
+
+  if (request.status !== 'pending') {
+    throw new Error('La solicitud no puede ser aprobada en su estado actual');
+  }
+
+  const driver = await query(
+    'SELECT * FROM module_rapidin_drivers WHERE id = $1',
+    [request.driver_id]
+  );
+
+  if (driver.rows.length === 0) {
+    throw new Error('Conductor no encontrado');
+  }
+
+  const cycleFromDb = request.cycle ?? request.driver_cycle ?? driver.rows[0]?.cycle ?? 1;
+  const interestRate = option.interestRate != null ? parseFloat(option.interestRate) : await getInterestRate(request.country, cycleFromDb);
+
+  const conditions = await query(
+    'SELECT * FROM module_rapidin_loan_conditions WHERE country = $1 AND active = true ORDER BY version DESC LIMIT 1',
+    [request.country]
+  );
+
+  if (conditions.rows.length === 0) {
+    throw new Error('No hay condiciones de préstamo configuradas');
+  }
+
+  const condition = conditions.rows[0];
+
+  const approvedOption = {
+    weeks: option.weeks,
+    weeklyInstallment: option.weeklyInstallment,
+    lastInstallment: option.lastInstallment,
+    totalAmount: option.totalAmount,
+    interestRate: interestRate,
+  };
+
+  let observationsJson = {};
+  try {
+    if (request.observations) {
+      observationsJson = typeof request.observations === 'string' ? JSON.parse(request.observations) : request.observations;
+    }
+  } catch (_) {}
+  observationsJson.approvedOption = approvedOption;
+  const observationsStr = JSON.stringify(observationsJson);
+
+  await query(
+    `UPDATE module_rapidin_loan_requests 
+     SET status = 'approved', approved_by = $1, approved_at = CURRENT_TIMESTAMP, observations = $2
+     WHERE id = $3`,
+    [userId, observationsStr, requestId]
+  );
+
+  return { request: await getLoanRequestById(requestId) };
+};
+
+export const disburseRequest = async (requestId, userId, options = {}) => {
+  const request = await getLoanRequestById(requestId);
+  if (!request) throw new Error('Solicitud no encontrada');
+  const existingLoan = await getLoanByRequestId(requestId);
+  if (existingLoan) {
+    if (request.status !== 'disbursed') {
+      await query(
+        `UPDATE module_rapidin_loan_requests 
+         SET status = 'disbursed', disbursed_at = COALESCE(disbursed_at, CURRENT_TIMESTAMP) 
+         WHERE id = $1`,
+        [requestId]
+      );
+    }
+    return { loan: existingLoan, request: await getLoanRequestById(requestId) };
+  }
+  if (request.status !== 'approved') {
+    throw new Error('Solo se puede desembolsar una solicitud en estado Aprobado');
+  }
+
+  let observationsJson = {};
+  try {
+    if (request.observations) {
+      observationsJson = typeof request.observations === 'string' ? JSON.parse(request.observations) : request.observations;
+    }
+  } catch (_) {}
+
+  const driverResult = await query('SELECT * FROM module_rapidin_drivers WHERE id = $1', [request.driver_id]);
+  if (driverResult.rows.length === 0) throw new Error('Conductor no encontrado');
+  const driver = driverResult.rows[0];
+  const cycleFromDb = request.cycle ?? request.driver_cycle ?? driver?.cycle ?? 1;
+
+  const conditionsResult = await query(
+    'SELECT * FROM module_rapidin_loan_conditions WHERE country = $1 AND active = true ORDER BY version DESC LIMIT 1',
+    [request.country]
+  );
+  if (conditionsResult.rows.length === 0) throw new Error('No hay condiciones de préstamo configuradas');
+  const conditions = conditionsResult.rows[0];
+
+  const EXACT_INSTALLMENTS = 5;
+  const createdByAdmin = observationsJson?.createdByAdmin === true;
+
+  let option = observationsJson?.approvedOption || observationsJson?.admin_selected_option;
+  if (option && option.weeks != null && option.weeklyInstallment != null) {
+    option = { ...option, totalAmount: option.totalAmount ?? (option.weeklyInstallment * (option.weeks - 1) + (option.lastInstallment ?? option.weeklyInstallment)) };
+    if (!createdByAdmin && option.weeks !== EXACT_INSTALLMENTS) {
+      const sim = await simulateLoanOptions(parseFloat(request.requested_amount) || 0, request.country, cycleFromDb, conditions);
+      if (sim?.option) {
+        option = { ...option, ...sim.option, interestRate: sim.option.interestRate ?? option.interestRate };
+      } else {
+        option = { ...option, weeks: EXACT_INSTALLMENTS };
+      }
+    }
+  } else {
+    const sim = await simulateLoanOptions(parseFloat(request.requested_amount) || 0, request.country, cycleFromDb, conditions);
+    if (!sim?.option || sim.option.weeks == null || sim.option.weeklyInstallment == null) {
+      throw new Error('No se pudo calcular la opción de préstamo. Verifique monto y condiciones.');
+    }
+    option = { ...sim.option };
+  }
+
+  const disbursementDate = new Date();
+  if (isSunday(disbursementDate)) {
+    throw new Error('No se puede desembolsar los domingos. El desembolso está disponible de lunes a sábado.');
+  }
+
+  let firstPaymentDateStr;
+  if (options.first_payment_today) {
+    firstPaymentDateStr = `${disbursementDate.getFullYear()}-${String(disbursementDate.getMonth() + 1).padStart(2, '0')}-${String(disbursementDate.getDate()).padStart(2, '0')}`;
+  } else if (options.first_payment_date && /^\d{4}-\d{2}-\d{2}$/.test(options.first_payment_date)) {
+    firstPaymentDateStr = options.first_payment_date;
+  } else {
+    const firstPaymentDateObj = getNextMondayFrom(disbursementDate);
+    firstPaymentDateStr = `${firstPaymentDateObj.getFullYear()}-${String(firstPaymentDateObj.getMonth() + 1).padStart(2, '0')}-${String(firstPaymentDateObj.getDate()).padStart(2, '0')}`;
+  }
+
+  const interestRate = option.interestRate != null ? parseFloat(option.interestRate) : await getInterestRate(request.country, cycleFromDb);
+
+  await query('BEGIN');
+  try {
+    const loanResult = await query(
+      `INSERT INTO module_rapidin_loans 
+       (request_id, driver_id, country, disbursed_amount, total_amount, interest_rate, 
+        number_of_installments, disbursed_at, first_payment_date, pending_balance, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, $8, $5, 'active')
+       RETURNING *`,
+      [
+        requestId,
+        request.driver_id,
+        request.country,
+        request.requested_amount,
+        option.totalAmount,
+        interestRate,
+        option.weeks,
+        firstPaymentDateStr,
+      ]
+    );
+    const loan = loanResult.rows[0];
+
+    await query(
+      `UPDATE module_rapidin_loan_requests 
+       SET status = 'disbursed', disbursed_at = CURRENT_TIMESTAMP 
+       WHERE id = $1`,
+      [requestId]
+    );
+
+    await query(
+      `UPDATE module_rapidin_documents 
+       SET loan_id = $1 
+       WHERE loan_id IS NULL 
+       AND (request_id = $2 OR file_path LIKE $3 OR file_name LIKE $3)`,
+      [loan.id, requestId, `%${requestId}%`]
+    );
+
+    await generateInstallmentSchedule(
+      loan.id,
+      request.requested_amount,
+      option.interestRate ?? interestRate,
+      option.weeks,
+      firstPaymentDateStr
+    );
+
+    await query('COMMIT');
+    return { loan, request: await getLoanRequestById(requestId) };
+  } catch (error) {
+    await query('ROLLBACK');
+    throw error;
+  }
+};
+
+export const getLoanByRequestId = async (requestId) => {
+  const result = await query(
+    'SELECT * FROM module_rapidin_loans WHERE request_id = $1 LIMIT 1',
+    [requestId]
+  );
+  return result.rows[0] || null;
+};
+
+export const getLoans = async (filters = {}) => {
+  let sql = `
+    SELECT l.*, 
+           d.dni, d.first_name as driver_first_name, d.last_name as driver_last_name,
+           d.external_driver_id,
+           r.observations AS request_observations,
+           COALESCE((SELECT SUM(COALESCE(i.late_fee, 0)) FROM module_rapidin_installments i WHERE i.loan_id = l.id), 0)::numeric AS total_late_fee
+    FROM module_rapidin_loans l
+    LEFT JOIN module_rapidin_drivers d ON d.id = l.driver_id
+    LEFT JOIN module_rapidin_loan_requests r ON r.id = l.request_id
+    WHERE 1=1
+  `;
+  const params = [];
+  let paramCount = 1;
+
+  if (filters.status) {
+    sql += ` AND l.status = $${paramCount++}`;
+    params.push(filters.status);
+  }
+
+  if (filters.country) {
+    sql += ` AND l.country = $${paramCount++}`;
+    params.push(filters.country);
+  }
+
+  if (filters.driver && filters.driver.trim()) {
+    const dSearch = buildDriverNameSearchSql('d', filters.driver, paramCount);
+    if (dSearch.sql) {
+      sql += dSearch.sql;
+      params.push(...dSearch.params);
+      paramCount = dSearch.nextParam;
+    }
+  }
+
+  if (filters.loan_id && filters.loan_id.trim()) {
+    const loanIdTerm = `%${filters.loan_id.trim()}%`;
+    sql += ` AND l.id::text ILIKE $${paramCount}`;
+    params.push(loanIdTerm);
+    paramCount += 1;
+  }
+
+  if (filters.date_from) {
+    sql += ` AND l.created_at::date >= $${paramCount++}`;
+    params.push(filters.date_from);
+  }
+  if (filters.date_to) {
+    sql += ` AND l.created_at::date <= $${paramCount++}`;
+    params.push(filters.date_to);
+  }
+
+  sql += ` ORDER BY l.created_at DESC`;
+
+  const limit = filters.limit != null ? Math.min(Math.max(1, parseInt(filters.limit, 10) || 10), 100) : null;
+  const offset = filters.offset != null ? Math.max(0, parseInt(filters.offset, 10) || 0) : null;
+
+  if (limit != null) {
+    // Usar lastIndexOf('FROM') para el FROM principal (el SELECT tiene un subquery con FROM)
+    const fromWhere = sql.substring(sql.lastIndexOf('FROM'), sql.indexOf('ORDER BY'));
+    const countResult = await query('SELECT COUNT(*)::int AS total ' + fromWhere, params);
+    const total = countResult.rows[0]?.total ?? 0;
+    sql += ` LIMIT $${paramCount++} OFFSET $${paramCount++}`;
+    params.push(limit, offset ?? 0);
+    const result = await query(sql, params);
+    return { data: result.rows, total };
+  }
+
+  const result = await query(sql, params);
+  return result.rows;
+};
+
+const LOANS_EXPORT_MAX = 50000;
+
+const buildLoanListFilterSql = (filters) => {
+  let sql = '';
+  const params = [];
+  let p = 1;
+  if (filters.status) {
+    sql += ` AND l.status = $${p++}`;
+    params.push(filters.status);
+  }
+  if (filters.country) {
+    sql += ` AND l.country = $${p++}`;
+    params.push(filters.country);
+  }
+  if (filters.driver && filters.driver.trim()) {
+    const dSearch = buildDriverNameSearchSql('d', filters.driver, p);
+    if (dSearch.sql) {
+      sql += dSearch.sql;
+      params.push(...dSearch.params);
+      p = dSearch.nextParam;
+    }
+  }
+  if (filters.loan_id && filters.loan_id.trim()) {
+    const loanIdTerm = `%${filters.loan_id.trim()}%`;
+    sql += ` AND l.id::text ILIKE $${p++}`;
+    params.push(loanIdTerm);
+  }
+  if (filters.date_from) {
+    sql += ` AND l.created_at::date >= $${p++}`;
+    params.push(filters.date_from);
+  }
+  if (filters.date_to) {
+    sql += ` AND l.created_at::date <= $${p++}`;
+    params.push(filters.date_to);
+  }
+  return { filterSql: sql, filterParams: params };
+};
+
+/**
+ * Export masivo: préstamos + cuotas con los mismos filtros que getLoans (sin paginación).
+ * @throws Error con code EXPORT_LIMIT_EXCEEDED si hay más de LOANS_EXPORT_MAX préstamos.
+ */
+export const getLoansExportBundle = async (filters = {}) => {
+  const { filterSql, filterParams } = buildLoanListFilterSql(filters);
+
+  const countRes = await query(
+    `SELECT COUNT(*)::int AS c
+     FROM module_rapidin_loans l
+     LEFT JOIN module_rapidin_drivers d ON d.id = l.driver_id
+     WHERE 1=1 ${filterSql}`,
+    filterParams
+  );
+  const total = countRes.rows[0]?.c ?? 0;
+  if (total > LOANS_EXPORT_MAX) {
+    const err = new Error(
+      `El export admite como máximo ${LOANS_EXPORT_MAX} préstamos. Hay ${total} con los filtros actuales; refiná los filtros.`
+    );
+    err.code = 'EXPORT_LIMIT_EXCEEDED';
+    throw err;
+  }
+
+  const loansSql = `
+    SELECT
+      l.id,
+      l.country,
+      l.status,
+      l.disbursed_amount,
+      l.total_amount,
+      l.pending_balance,
+      d.dni,
+      d.phone AS driver_phone,
+      d.first_name AS driver_first_name,
+      d.last_name AS driver_last_name,
+      COUNT(*) OVER (PARTITION BY l.driver_id)::int AS driver_total_loans,
+      COALESCE((SELECT SUM(COALESCE(i2.late_fee, 0)) FROM module_rapidin_installments i2 WHERE i2.loan_id = l.id), 0)::numeric AS total_late_fee,
+      (CASE
+        WHEN l.disbursed_at IS NOT NULL AND l.country = 'PE' THEN (l.disbursed_at AT TIME ZONE 'America/Lima')::date::text
+        WHEN l.disbursed_at IS NOT NULL AND l.country = 'CO' THEN (l.disbursed_at AT TIME ZONE 'America/Bogota')::date::text
+        WHEN l.disbursed_at IS NOT NULL THEN (l.disbursed_at AT TIME ZONE 'UTC')::date::text
+        ELSE NULL END) AS disbursed_date_display,
+      (CASE
+        WHEN l.status = 'cancelled' AND l.country = 'PE' THEN (l.updated_at AT TIME ZONE 'America/Lima')::date::text
+        WHEN l.status = 'cancelled' AND l.country = 'CO' THEN (l.updated_at AT TIME ZONE 'America/Bogota')::date::text
+        WHEN l.status = 'cancelled' THEN (l.updated_at AT TIME ZONE 'UTC')::date::text
+        ELSE NULL END) AS cancellation_date_display
+    FROM module_rapidin_loans l
+    LEFT JOIN module_rapidin_drivers d ON d.id = l.driver_id
+    WHERE 1=1 ${filterSql}
+    ORDER BY l.created_at DESC`;
+
+  const loansRes = await query(loansSql, filterParams);
+
+  const installmentsSql = `
+    SELECT
+      i.loan_id,
+      i.installment_number,
+      i.due_date,
+      i.installment_amount,
+      i.paid_amount,
+      i.late_fee,
+      i.paid_late_fee,
+      i.status AS installment_status,
+      i.paid_date,
+      d.first_name AS driver_first_name,
+      d.last_name AS driver_last_name,
+      d.dni,
+      l.country AS loan_country
+    FROM module_rapidin_installments i
+    INNER JOIN module_rapidin_loans l ON l.id = i.loan_id
+    LEFT JOIN module_rapidin_drivers d ON d.id = l.driver_id
+    WHERE 1=1 ${filterSql}
+    ORDER BY l.id, i.installment_number`;
+
+  const installmentsRes = await query(installmentsSql, filterParams);
+
+  return { loans: loansRes.rows, installments: installmentsRes.rows };
+};
+
+/** next_installment_amount = solo cuota pendiente (sin mora). next_installment_late_fee = mora. next_installment_total = cuota + mora. */
+export const getLoanById = async (id) => {
+  const result = await query(
+    `SELECT l.*, 
+            d.dni, d.first_name as driver_first_name, d.last_name as driver_last_name, d.phone, d.email,
+            d.external_driver_id,
+            yd.phone AS whatsapp_phone,
+            r.observations AS request_observations,
+            COALESCE((SELECT SUM(COALESCE(i.late_fee, 0)) FROM module_rapidin_installments i WHERE i.loan_id = l.id), 0)::numeric AS total_late_fee,
+            (SELECT i.installment_number
+             FROM module_rapidin_installments i
+             WHERE i.loan_id = l.id AND i.status IN ('pending', 'overdue')
+             ORDER BY i.due_date ASC, i.installment_number ASC
+             LIMIT 1) AS next_installment_number,
+            (SELECT (i.installment_amount - COALESCE(i.paid_amount, 0))
+             FROM module_rapidin_installments i
+             WHERE i.loan_id = l.id AND i.status IN ('pending', 'overdue')
+             ORDER BY i.due_date ASC, i.installment_number ASC
+             LIMIT 1) AS next_installment_amount,
+            (SELECT COALESCE(i.late_fee, 0)
+             FROM module_rapidin_installments i
+             WHERE i.loan_id = l.id AND i.status IN ('pending', 'overdue')
+             ORDER BY i.due_date ASC, i.installment_number ASC
+             LIMIT 1) AS next_installment_late_fee,
+            (SELECT i.id
+             FROM module_rapidin_installments i
+             WHERE i.loan_id = l.id AND i.status IN ('pending', 'overdue')
+             ORDER BY i.due_date ASC, i.installment_number ASC
+             LIMIT 1) AS next_installment_id
+     FROM module_rapidin_loans l
+     LEFT JOIN module_rapidin_drivers d ON d.id = l.driver_id
+     LEFT JOIN drivers yd ON yd.driver_id::text = d.external_driver_id
+     LEFT JOIN module_rapidin_loan_requests r ON r.id = l.request_id
+     WHERE l.id = $1`,
+    [id]
+  );
+
+  const row = result.rows[0];
+  if (!row) return null;
+  row.next_installment_amount = row.next_installment_amount != null ? parseFloat(row.next_installment_amount) : null;
+  row.next_installment_late_fee = row.next_installment_late_fee != null ? parseFloat(row.next_installment_late_fee) : null;
+  row.total_late_fee = row.total_late_fee != null ? parseFloat(row.total_late_fee) : null;
+  if (row.next_installment_amount != null && row.next_installment_late_fee != null) {
+    row.next_installment_total = Math.round((row.next_installment_amount + row.next_installment_late_fee) * 100) / 100;
+  }
+  return row;
+};
+
+export const getInstallmentSchedule = async (loanId) => {
+  // Recalcular mora de cuotas vencidas. Si hay late_fee_base_date (pago parcial), la mora calculada es solo desde esa fecha → no restar paid_late_fee.
+  const overdueForLoan = await query(
+    `SELECT i.id, COALESCE(i.paid_late_fee, 0)::numeric AS paid_late_fee, i.late_fee_base_date
+     FROM module_rapidin_installments i
+     JOIN module_rapidin_loans l ON l.id = i.loan_id
+     WHERE i.loan_id = $1 AND l.status IN ('active', 'defaulted')
+       AND i.status IN ('pending', 'overdue')
+       AND i.due_date < CURRENT_DATE
+       AND (i.installment_amount + COALESCE(i.late_fee, 0) - COALESCE(i.paid_amount, 0)) > 0`,
+    [loanId]
+  );
+  for (const row of overdueForLoan.rows) {
+    const feeRes = await query('SELECT calculate_late_fee($1, CURRENT_DATE) as late_fee', [row.id]);
+    const totalMora = parseFloat(feeRes.rows[0]?.late_fee) || 0;
+    const paidLateFee = parseFloat(row.paid_late_fee || 0) || 0;
+    const hasBaseDate = row.late_fee_base_date != null;
+    const newLateFee = hasBaseDate ? totalMora : Math.max(0, totalMora - paidLateFee);
+    await query(
+      `UPDATE module_rapidin_installments
+       SET late_fee = $1, days_overdue = GREATEST(0, CURRENT_DATE - COALESCE(late_fee_base_date, due_date)), status = 'overdue', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [newLateFee, row.id]
+    );
+  }
+  if (overdueForLoan.rows.length > 0) {
+    const sumRes = await query(
+      `SELECT SUM((installment_amount - COALESCE(paid_amount, 0)) + COALESCE(late_fee, 0)) AS pending_balance
+       FROM module_rapidin_installments WHERE loan_id = $1 AND status != 'cancelled'`,
+      [loanId]
+    );
+    const pendingBalance = sumRes.rows[0]?.pending_balance ?? 0;
+    await query(`UPDATE module_rapidin_loans SET pending_balance = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [pendingBalance, loanId]);
+  }
+
+  const result = await query(
+    `SELECT 
+       id, loan_id, installment_number, installment_amount, principal_amount, interest_amount,
+       due_date, paid_date, paid_amount,
+       GREATEST(0, COALESCE(late_fee, 0))::numeric AS late_fee,
+       COALESCE(paid_late_fee, 0)::numeric AS paid_late_fee,
+       (COALESCE(paid_amount, 0) + COALESCE(paid_late_fee, 0))::numeric AS total_paid,
+       COALESCE(late_fee_waived, false) AS late_fee_waived,
+       days_overdue, status, created_at, updated_at
+     FROM module_rapidin_installments 
+     WHERE loan_id = $1 
+     ORDER BY installment_number`,
+    [loanId]
+  );
+
+  const installmentIds = result.rows.map((r) => r.id);
+  let lastPaymentByInstallment = {};
+  if (installmentIds.length > 0) {
+    const dateRes = await query(
+      `SELECT pi.installment_id, MAX(p.payment_date)::text AS last_payment_date
+       FROM module_rapidin_payment_installments pi
+       JOIN module_rapidin_payments p ON p.id = pi.payment_id
+       WHERE pi.installment_id = ANY($1::uuid[])
+       GROUP BY pi.installment_id`,
+      [installmentIds]
+    );
+    dateRes.rows.forEach((row) => {
+      lastPaymentByInstallment[row.installment_id] = row.last_payment_date;
+    });
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const rows = result.rows.map((r) => {
+    const lateFee = Math.max(0, parseFloat(r.late_fee) || 0);
+    const paidLateFee = Math.max(0, parseFloat(r.paid_late_fee) || 0);
+    const totalCobrar = (parseFloat(r.installment_amount) || 0) + lateFee;
+    const totalPagado = (parseFloat(r.paid_amount) || 0) + paidLateFee;
+    // Pagada solo cuando monto pagado (cuota + mora) >= total a cobrar; no confiar en status de BD
+    const paid = totalPagado >= totalCobrar;
+    const dueDate = r.due_date ? new Date(r.due_date) : null;
+    dueDate && dueDate.setHours(0, 0, 0, 0);
+    const isOverdue = !paid && dueDate && dueDate.getTime() < today.getTime();
+    const effectiveStatus = paid ? 'paid' : (isOverdue ? 'overdue' : (r.status || 'pending'));
+    // Si está pagada: mora pendiente = 0; mora cobrada = la que se pagó (paid_late_fee o totalPagado - cuota si vino todo en paid_amount)
+    const lateFeeDisplay = paid ? 0 : lateFee;
+    const moraCobrada = paid
+      ? (paidLateFee > 0 ? paidLateFee : Math.max(0, totalPagado - (parseFloat(r.installment_amount) || 0)))
+      : 0;
+    const lastPaymentDate = lastPaymentByInstallment[r.id] || null;
+    return { ...r, late_fee: lateFeeDisplay, paid_late_fee: paidLateFee, mora_cobrada: moraCobrada, status: effectiveStatus, total_pagado: totalPagado, total_a_cobrar: totalCobrar, last_payment_date: lastPaymentDate };
+  });
+  return rows;
+};
+
+
+
+
+
+
+

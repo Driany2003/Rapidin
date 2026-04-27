@@ -1,7 +1,7 @@
 import pool from '../database/connection.js';
 import { logger } from '../utils/logger.js';
 import { normalizePhoneForDb, phoneDigitsForRapidinMatch } from '../utils/helpers.js';
-import { updateLoanBalance, checkLoanCompleted } from './paymentService.js';
+import { updateLoanBalance, checkLoanCompleted } from '../yego_rapidin/services/paymentService.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

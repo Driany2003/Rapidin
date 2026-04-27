@@ -18,12 +18,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import XLSX from 'xlsx';
 import { query } from '../config/database.js';
-import { round2 } from '../services/miautoMoneyUtils.js';
+import { round2 } from '../yego_miauto/services/miautoMoneyUtils.js';
 import { mondayOfWeekContainingYmd, computeDueDateForMiAutoCuota } from '../utils/miautoLimaWeekRange.js';
 import {
   isSemanaDepositoMiAuto,
   persistPaidAmountCapsForSolicitud,
-} from '../services/miautoCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SHEET_NAME = 'Cuotas Semanales';
@@ -33,7 +33,10 @@ const COL_DNI = 6;
 const COL_PHONE = 7;
 const FIRST_DATA_ROW = 3;
 const DEFAULT_CUTOFF = '2026-04-13';
-const DEFAULT_XLSX = path.join(__dirname, '../../ENTREGA INMEDIATA  - GIOMAR SISTEMA - YEGO MI AUTO ACTUALIZADO 07.xlsx');
+const DEFAULT_XLSX = path.join(
+  __dirname,
+  '../../ENTREGA INMEDIATA 🚗🔥  - 27-04-26 giomar.xlsx'
+);
 
 function normalizePlacaAsignada(value) {
   if (value == null) return '';

@@ -13,7 +13,7 @@ import { query } from '../config/database.js';
 import {
   createComprobanteConformidadAdmin,
   createComprobanteCuotaSemanal,
-} from '../services/miautoComprobanteCuotaSemanalService.js';
+} from '../yego_miauto/services/miautoComprobanteCuotaSemanalService.js';
 
 const rawArgs = process.argv.slice(2);
 const adminIdx = rawArgs.indexOf('--admin');

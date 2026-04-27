@@ -13,7 +13,7 @@
  */
 import 'dotenv/config';
 import { query } from '../config/database.js';
-import { recalcularMoraGlobal, persistPaidAmountCapsForSolicitud } from '../services/miautoCuotaSemanalService.js';
+import { recalcularMoraGlobal, persistPaidAmountCapsForSolicitud } from '../yego_miauto/services/miautoCuotaSemanalService.js';
 
 const apply = process.argv.includes('--apply');
 const soloCaps = process.argv.includes('--solo-caps');
