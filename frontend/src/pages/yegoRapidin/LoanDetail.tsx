@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, User, Banknote, Calendar, AlertCircle, FileText, CheckCircle, Clock, XCircle, X } from 'lucide-react';
+import { ArrowLeft, User, Banknote, Calendar, AlertCircle, FileText, CheckCircle, Clock, XCircle, X, Download } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
 import api from '../../services/api';
 import { formatDateUTC } from '../../utils/date';
@@ -53,6 +53,7 @@ const LoanDetail = () => {
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [whatsAppMessage, setWhatsAppMessage] = useState('');
   const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
+  const [downloadingConstancia, setDownloadingConstancia] = useState(false);
 
   const getBackToLoansState = (): (LoansSearchState & { fromLoanDetail: true }) | undefined => {
     const s = location.state as LoansSearchState | null;
@@ -116,6 +117,33 @@ const LoanDetail = () => {
   const totalMoraPendiente = useMemo(() => {
     return schedule.reduce((sum, i) => sum + Math.max(0, parseFloat(i.late_fee ?? 0)), 0);
   }, [schedule]);
+
+  const handleDownloadConstancia = async () => {
+    if (!id) return;
+    setDownloadingConstancia(true);
+    try {
+      const response = await api.get(`/constancias/loan/${id}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const disposition = response.headers['content-disposition'];
+      let fileName = `constancia_${id}.docx`;
+      if (disposition) {
+        const match = disposition.match(/filename="?(.+?)"?$/);
+        if (match) fileName = match[1];
+      }
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('Constancia descargada');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al descargar la constancia');
+    } finally {
+      setDownloadingConstancia(false);
+    }
+  };
 
   const openWhatsAppModal = () => {
     const name = [loan?.driver_first_name, loan?.driver_last_name].filter(Boolean).join(' ') || 'Conductor';
@@ -245,18 +273,29 @@ const LoanDetail = () => {
 
       {/* Header */}
       <div className="bg-[#8B1A1A] rounded-lg p-4 lg:p-5">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-[#6B1515] rounded-lg flex items-center justify-center flex-shrink-0">
-            <Banknote className="w-5 h-5 text-white" />
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#6B1515] rounded-lg flex items-center justify-center flex-shrink-0">
+              <Banknote className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg lg:text-xl font-bold text-white leading-tight">
+                Detalle de Préstamo
+              </h1>
+              <p className="text-xs lg:text-sm text-white/90 mt-0.5">
+                Información completa del préstamo
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg lg:text-xl font-bold text-white leading-tight">
-              Detalle de Préstamo
-            </h1>
-            <p className="text-xs lg:text-sm text-white/90 mt-0.5">
-              Información completa del préstamo
-            </p>
-          </div>
+          <button
+            onClick={handleDownloadConstancia}
+            disabled={downloadingConstancia}
+            className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            title="Descargar Constancia"
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">{downloadingConstancia ? 'Generando...' : 'Descargar Constancia'}</span>
+          </button>
         </div>
       </div>
 

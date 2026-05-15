@@ -162,6 +162,30 @@ const Loans = () => {
 
   const searchKey = `${debouncedDriver}\0${debouncedLoanId}`;
   const prevSearchKeyRef = useRef(searchKey);
+
+  const handleDownloadConstancia = async (loanId: string) => {
+    try {
+      const response = await api.get(`/constancias/loan/${loanId}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const disposition = response.headers['content-disposition'];
+      let fileName = `constancia_${loanId}.docx`;
+      if (disposition) {
+        const match = disposition.match(/filename="?(.+?)"?$/);
+        if (match) fileName = match[1];
+      }
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('Constancia descargada');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al descargar la constancia');
+    }
+  };
+
   useEffect(() => {
     if (prevSearchKeyRef.current !== searchKey) {
       prevSearchKeyRef.current = searchKey;
@@ -736,25 +760,34 @@ const Loans = () => {
                       {getStatusBadge(loan.status || 'active')}
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap">
-                      <button
-                        onClick={() => navigate(`/admin/loans/${loan.id}`, {
-                          state: {
-                            fromLoansSearch: true,
-                            driverSearchInput,
-                            loanIdSearchInput,
-                            status: filters.status,
-                            country: filters.country,
-                            date_from: filters.date_from,
-                            date_to: filters.date_to,
-                            page: pageClamped,
-                            limit: pageSize,
-                          },
-                        })}
-                        className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
-                        title="Ver detalles"
-                      >
-                        <Eye className="w-5 h-5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => navigate(`/admin/loans/${loan.id}`, {
+                            state: {
+                              fromLoansSearch: true,
+                              driverSearchInput,
+                              loanIdSearchInput,
+                              status: filters.status,
+                              country: filters.country,
+                              date_from: filters.date_from,
+                              date_to: filters.date_to,
+                              page: pageClamped,
+                              limit: pageSize,
+                            },
+                          })}
+                          className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
+                          title="Ver detalles"
+                        >
+                          <Eye className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => handleDownloadConstancia(loan.id)}
+                          className="p-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"
+                          title="Descargar Constancia"
+                        >
+                          <Download className="w-5 h-5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

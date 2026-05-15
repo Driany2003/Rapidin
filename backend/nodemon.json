@@ -1,0 +1,5 @@
+{
+  "watch": ["index.js", "config/", "database/", "jobs/", "middleware/", "realtime/", "routes/", "services/", "utils/", "yego_miauto/", "yego_rapidin/"],
+  "ignore": ["node_modules/", "uploads/", "backups/", "logs/", "scripts/", ".git/", "*.log"],
+  "ext": "js,mjs,cjs,json"
+}

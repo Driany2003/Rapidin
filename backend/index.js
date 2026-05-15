@@ -111,6 +111,7 @@ import cycleConfigRoutes from './yego_rapidin/routes/cycleConfig.js';
 import interestRatesRoutes from './yego_rapidin/routes/interestRates.js';
 import adminLoanRequestRoutes from './yego_rapidin/routes/adminLoanRequest.js';
 import cobranzasYegoRoutes from './yego_rapidin/routes/cobranzasYego.js';
+import constanciasRoutes from './routes/constancias.js';
 import miautoRoutes from './yego_miauto/routes/miauto.js';
 
 app.use('/api/auth', authRoutes); // authLimiter deshabilitado temporalmente
@@ -137,6 +138,7 @@ app.use('/api/cycle-config', cycleConfigRoutes);
 app.use('/api/interest-rates', interestRatesRoutes);
 app.use('/api/admin', adminLoanRequestRoutes);
 app.use('/api/miauto', miautoRoutes);
+app.use('/api/constancias', constanciasRoutes);
 app.use('/api/cobranzas-yego', cobranzasYegoRoutes);
 
 app.use(notFound);

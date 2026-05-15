@@ -7,6 +7,7 @@ const REPO_ROOT = path.join(__dirname, '..', '..');
 
 /** Nombres probados en orden (el primero que exista en la raíz del repo). */
 export const ENTREGA_INMEDIATA_XLSX_CANDIDATES = [
+  'ENTREGA INMEDIATA 🚗🔥  (9) - 11-05-26 - giomar cobros YMA.xlsx',
   'ENTREGA INMEDIATA 🚗🔥  (7).xlsx',
   'ENTREGA INMEDIATA 🚗🔥  - 27-04-26 giomar.xlsx',
 ];
