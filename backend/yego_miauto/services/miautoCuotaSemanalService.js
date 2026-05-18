@@ -38,7 +38,7 @@ const PARTNER_FEES_PCT = 0.8333;
  * Máx. días civiles de devengo de mora desde el vencimiento (Lima). Ej. venc. 16/03 → 06/04 = 21 días.
  * Evita que la mora siga creciendo indefinidamente en columnas/Excel que suman cuota + late_fee.
  */
-const MORA_MAX_DIAS_ACUMULACION_MI_AUTO = 21;
+const MORA_MAX_DIAS_ACUMULACION_MI_AUTO = null;
 
 /** Fragmento SQL: fecha civil de hoy en Lima (misma región que cronos Mi Auto). */
 const SQL_LIMA_TODAY = `(CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date`;
@@ -314,26 +314,37 @@ export function snapshotOrigenFilaTrasCascadaPool({
   const cs = round2(Number(cuotaSemanal) || 0);
   const cobro = round2(Number(cobroSaldo) || 0);
 
+  const obligacionSemana = round2(cs + cobro);
+
+  const remCubreCuota = rem > 0.005 && rem >= obligacionSemana - 0.005;
+  const aplicarReduccion = remCubreCuota || rem <= 0.005;
+
+  const remEfectivo = remCubreCuota ? round2(Math.max(0, rem - obligacionSemana)) : rem;
+
   const partnerFeesRawStored =
-    rem <= 0.005 ? round2(0) : partnerFeesRawFromRemainingPool(rem, pct);
+    remEfectivo <= 0.005 ? round2(0) : partnerFeesRawFromRemainingPool(remEfectivo, pct);
   const partnerFees83Stored = round2(partnerFeesRawStored * PARTNER_FEES_PCT);
   const partnerFeesYangoRawStored =
-    rem <= 0.005 ? null : partnerFeesRawStored;
+    remEfectivo <= 0.005 ? null : partnerFeesRawStored;
 
-  const amountDuePersisted = computeAmountDueSemanal({
-    cuotaSemanal: cs,
-    partnerFeesRaw: partnerFeesRawStored > 0.005 ? partnerFeesRawStored : 0,
-    pctComision: pct,
-    cobroSaldo: cobro,
-    partnerFeesApplyToCuotaReduction: !(partnerFeesRawStored > 0.005),
-    commissionGoesToWaterfall: partnerFeesRawStored > 0.005,
-  });
+  const amountDuePersisted = remCubreCuota
+    ? round2(0)
+    : computeAmountDueSemanal({
+        cuotaSemanal: cs,
+        partnerFeesRaw: partnerFeesRawStored > 0.005 ? partnerFeesRawStored : 0,
+        pctComision: pct,
+        cobroSaldo: cobro,
+        partnerFeesApplyToCuotaReduction: aplicarReduccion,
+        commissionGoesToWaterfall: !aplicarReduccion,
+      });
 
   return {
     partnerFeesRaw: partnerFeesRawStored,
     partnerFees83: partnerFees83Stored,
     partnerFeesYangoRaw: partnerFeesYangoRawStored,
     amountDue: amountDuePersisted,
+    saldoFavorConductor: remCubreCuota ? round2(rem - obligacionSemana) : round2(0),
+    remCubreCuota,
   };
 }
 
@@ -1240,6 +1251,7 @@ export async function ensureCuotaSemanalForWeek(
         }
       }
     }
+    let saldoFavorSave = round2(0);
     let partnerFeesRawStored;
     let partnerFees83Stored;
     let partnerFeesYangoStored;
@@ -1255,6 +1267,7 @@ export async function ensureCuotaSemanalForWeek(
       partnerFees83Stored = snap.partnerFees83;
       partnerFeesYangoStored = snap.partnerFeesYangoRaw;
       amountDuePersisted = snap.amountDue;
+      saldoFavorSave = snap.saldoFavorConductor || round2(0);
     } else {
       partnerFeesRawStored = partnerFeesRawRounded;
       partnerFees83Stored = round2(partnerFeesRawStored * PARTNER_FEES_PCT);
@@ -1266,7 +1279,7 @@ export async function ensureCuotaSemanalForWeek(
       `UPDATE module_miauto_cuota_semanal
        SET num_viajes = $1, partner_fees_raw = $2, partner_fees_83 = $3, partner_fees_yango_raw = $4, partner_fees_cascada_destino = $5::jsonb,
            bono_auto = $6, cuota_semanal = $7, amount_due = $8, moneda = $9, pct_comision = $10, cobro_saldo = $11, paid_amount = $12, status = $13, due_date = $14,
-           montos_fuente = 'sistema', updated_at = CURRENT_TIMESTAMP
+           saldo_favor_conductor = $17, montos_fuente = 'sistema', updated_at = CURRENT_TIMESTAMP
        WHERE solicitud_id = $15 AND week_start_date = $16`,
       [
         numViajes,
@@ -1285,6 +1298,7 @@ export async function ensureCuotaSemanalForWeek(
         dueDateForRow,
         solicitudId,
         weekStartDate,
+        w1.saldoFavorConductor || saldoFavorSave || round2(0),
       ]
     );
     await persistPaidAmountCapsForSolicitud(solicitudId);
@@ -1337,6 +1351,7 @@ export async function ensureCuotaSemanalForWeek(
   let insPartnerFees83;
   let insYangoRaw;
   let amountDueInsert = amountDue;
+  let saldoFavorInsert = round2(0);
   if (!isFirstCuotaSemanal && poolCascadaNuevo > 0.005) {
     const insSnap = snapshotOrigenFilaTrasCascadaPool({
       remainingPoolUsd: finalPoolRemIns,
@@ -1348,6 +1363,7 @@ export async function ensureCuotaSemanalForWeek(
     insPartnerFees83 = insSnap.partnerFees83;
     insYangoRaw = insSnap.partnerFeesYangoRaw;
     amountDueInsert = insSnap.amountDue;
+    saldoFavorInsert = insSnap.saldoFavorConductor || round2(0);
   } else {
     insPartnerFeesRaw = partnerFeesRawRounded;
     insPartnerFees83 = round2(insPartnerFeesRaw * PARTNER_FEES_PCT);
@@ -1356,8 +1372,8 @@ export async function ensureCuotaSemanalForWeek(
 
   const ins = await query(
     `INSERT INTO module_miauto_cuota_semanal
-     (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, partner_fees_yango_raw, partner_fees_cascada_destino, bono_auto, cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, montos_fuente)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, 'sistema')
+     (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, partner_fees_yango_raw, partner_fees_cascada_destino, bono_auto, cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, saldo_favor_conductor, montos_fuente)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'sistema')
      RETURNING id`,
     [
       solicitudId,
@@ -1376,6 +1392,7 @@ export async function ensureCuotaSemanalForWeek(
       moneda,
       pctComision,
       cobroSaldo,
+      saldoFavorInsert,
     ]
   );
   if (!isFirstCuotaSemanal && poolCascadaNuevo > 0.005) {
@@ -2393,6 +2410,8 @@ function buildCuotaSemanalApiRow(r, cronograma, vehId, options = {}) {
     partner_fees_yango_83: partnerFeesYango83Api,
     /** Imputación del pool PF+comisión a otras filas: `{ cuota_semanal_id, week_start_date, monto }[]`. */
     partner_fees_cascada_aplicado_a: partnerFeesCascadaApi,
+    /** Saldo a favor del conductor: excedente del cobro por ingresos que cubre la cuota completa. El operario debe pagárselo. */
+    saldo_favor_conductor: round2(parseFloat(r.saldo_favor_conductor) || 0),
     cuota_neta: d.cuota_neta,
     /** Remanente del capital cuota (plan) tras imputar pagos con regla mora → cuota. */
     cuota_pendiente: cuotaPendienteApiOut,
@@ -2572,7 +2591,7 @@ async function fetchCuotasSemanalesPayload(solicitudId, options = {}) {
     `SELECT id, solicitud_id, week_start_date, due_date, num_viajes, bono_auto, cuota_semanal, amount_due, paid_amount, late_fee, status, moneda, pct_comision, cobro_saldo,
             partner_fees_raw, partner_fees_83, partner_fees_yango_raw, partner_fees_cascada_destino,
             fecha_ultimo_abono, fecha_primer_comprobante, montos_fuente, cobro_desde_saldo_conductor,
-            created_at, updated_at
+            saldo_favor_conductor, created_at, updated_at
      FROM module_miauto_cuota_semanal
      WHERE solicitud_id = $1
      ORDER BY week_start_date ASC NULLS LAST, due_date ASC NULLS LAST, id ASC`,
