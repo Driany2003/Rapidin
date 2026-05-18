@@ -147,27 +147,21 @@ export const getDriverDashboard = async (phone, country, parkId = null, rapidinD
     // Préstamo "principal" para mensaje de bloqueo (primero de la flota)
     let activeLoan = activeLoansResult.rows[0] || null;
 
-    // 2.4 Si no hay préstamo activo, verificar si tiene un préstamo cancelado cuya última fecha de cronograma aún no ha llegado (pagó adelantado): debe esperar
+    // 2.4 Si no hay préstamo activo, verificar si tiene un préstamo cancelado con cuotas pendientes
     if (!activeLoan) {
-      const cancelledWithFutureDateQuery = `
-        SELECT MAX(i.due_date) as last_schedule_due_date
+      const cancelledUnpaidQuery = `
+        SELECT 1
         FROM module_rapidin_loans l
         JOIN module_rapidin_installments i ON i.loan_id = l.id
         WHERE l.driver_id = $1 AND l.country = $2 AND l.status = 'cancelled'
-        GROUP BY l.id
-        HAVING MAX(i.due_date) > CURRENT_DATE
+          AND i.status IN ('pending', 'overdue')
+        LIMIT 1
       `;
-      const cancelledFuture = await query(cancelledWithFutureDateQuery, [rapidinDriverId, country]);
-      let maxFutureDate = null;
-      for (const row of cancelledFuture.rows) {
-        if (row.last_schedule_due_date && (!maxFutureDate || new Date(row.last_schedule_due_date) > new Date(maxFutureDate))) {
-          maxFutureDate = row.last_schedule_due_date;
-        }
-      }
-      if (maxFutureDate) {
+      const cancelledUnpaidResult = await query(cancelledUnpaidQuery, [rapidinDriverId, country]);
+      if (cancelledUnpaidResult.rows.length > 0) {
         activeLoan = {
           id: null,
-          last_schedule_due_date: maxFutureDate,
+          last_schedule_due_date: new Date().toISOString(),
           _scheduleBlockOnly: true
         };
       }
@@ -235,10 +229,12 @@ export const getDriverDashboard = async (phone, country, parkId = null, rapidinD
       daysUntilPayment = Math.ceil((nextPayment - today) / (1000 * 60 * 60 * 24));
     }
 
-    // 7. Generar mensajes según el estado. Bloquear si: préstamo activo con última fecha no pasada, O préstamo cancelado pero última fecha de cronograma aún no ha llegado (pagó adelantado).
+    // 7. Generar mensajes según el estado. Bloquear solo si tiene cuotas pendientes reales.
     let activeLoanMessage = null;
     let canRequestFromDate = null;
-    if (activeLoan && activeLoan.last_schedule_due_date) {
+    if (activeLoan && activeLoan._scheduleBlockOnly) {
+      activeLoanMessage = 'No puedes solicitar un nuevo préstamo. Tienes cuotas pendientes en un préstamo anterior.';
+    } else if (activeLoan && activeLoan.last_schedule_due_date && parseFloat(activeLoan.pending_amount || activeLoan.total_pending || 0) > 0.005) {
       const lastScheduleDate = new Date(activeLoan.last_schedule_due_date);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -246,9 +242,9 @@ export const getDriverDashboard = async (phone, country, parkId = null, rapidinD
       if (lastScheduleDate > today) {
         const fechaStr = lastScheduleDate.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
         canRequestFromDate = fechaStr;
-        activeLoanMessage = activeLoan._scheduleBlockOnly
-          ? `No puedes solicitar un nuevo préstamo hasta cumplir la última fecha de tu cronograma. Podrás solicitar a partir del ${fechaStr}.`
-          : `Debes esperar hasta el ${fechaStr} (última fecha de tu cronograma) para solicitar un nuevo préstamo. Podrás solicitar a partir de esa fecha.`;
+        activeLoanMessage = `Tienes un préstamo activo con saldo pendiente.`;
+      } else {
+        activeLoanMessage = 'Tienes un préstamo activo con saldo pendiente. Debes completarlo antes de solicitar uno nuevo.';
       }
     }
 

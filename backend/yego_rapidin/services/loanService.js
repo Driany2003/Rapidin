@@ -11,48 +11,38 @@ export const createLoanRequest = async (data, userId = null, options = {}) => {
 
   // El flujo del conductor: no puede tener préstamo activo ni solicitud en proceso. El admin puede crear otra solicitud igual.
   if (!createdByAdmin) {
-    // Verificar si el conductor tiene un préstamo activo. Solo bloquear si la última fecha del cronograma aún no ha pasado (aunque haya adelantado pagos).
+    // Verificar si el conductor tiene un préstamo activo con saldo pendiente real.
     const activeLoan = await query(
-      `SELECT l.id, l.status, MAX(i.due_date) as last_schedule_due_date
+      `SELECT l.id, l.status, l.pending_balance, MAX(i.due_date) as last_schedule_due_date,
+              COUNT(*) FILTER (WHERE i.status IN ('pending', 'overdue'))::int AS cuotas_impagas
        FROM module_rapidin_loans l
        LEFT JOIN module_rapidin_installments i ON i.loan_id = l.id
        WHERE l.driver_id = $1 AND l.status = 'active'
-       GROUP BY l.id, l.status
+       GROUP BY l.id, l.status, l.pending_balance
        LIMIT 1`,
       [driver_id]
     );
 
     if (activeLoan.rows.length > 0) {
-      const lastScheduleDueDate = activeLoan.rows[0].last_schedule_due_date;
-      if (lastScheduleDueDate) {
-        const lastDate = new Date(lastScheduleDueDate);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        lastDate.setHours(0, 0, 0, 0);
-        if (lastDate > today) {
-          const fechaStr = lastDate.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
-          throw new Error(`Debes esperar hasta el ${fechaStr} (última fecha de tu cronograma) para solicitar un nuevo préstamo. Aunque hayas adelantado tus pagos, podrás solicitar a partir de esa fecha.`);
-        }
-      } else {
-        throw new Error('Ya tienes un préstamo activo. Debes completar o cancelar tu préstamo actual antes de solicitar uno nuevo.');
+      const row = activeLoan.rows[0];
+      const tieneSaldoPendiente = parseFloat(row.pending_balance) > 0.005 || (row.cuotas_impagas > 0);
+      if (tieneSaldoPendiente) {
+        throw new Error('Ya tienes un préstamo activo con saldo pendiente. Debes completar tu préstamo actual antes de solicitar uno nuevo.');
       }
     }
 
-    // Si tiene préstamo cancelado pero la última fecha del cronograma aún no ha llegado (pagó adelantado), debe esperar
-    const cancelledWithFutureDate = await query(
-      `SELECT MAX(i.due_date) as last_schedule_due_date
+    // Si tiene préstamo cancelado pero con cuotas aún impagas, debe esperar. Si ya pagó todo, puede seguir.
+    const cancelledUnpaid = await query(
+      `SELECT l.id
        FROM module_rapidin_loans l
        JOIN module_rapidin_installments i ON i.loan_id = l.id
        WHERE l.driver_id = $1 AND l.status = 'cancelled'
-       GROUP BY l.id
-       HAVING MAX(i.due_date) > CURRENT_DATE
+         AND i.status IN ('pending', 'overdue')
        LIMIT 1`,
       [driver_id]
     );
-    if (cancelledWithFutureDate.rows.length > 0 && cancelledWithFutureDate.rows[0].last_schedule_due_date) {
-      const lastDate = new Date(cancelledWithFutureDate.rows[0].last_schedule_due_date);
-      const fechaStr = lastDate.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
-      throw new Error(`No puedes solicitar un nuevo préstamo hasta cumplir la última fecha de tu cronograma. Podrás solicitar a partir del ${fechaStr}.`);
+    if (cancelledUnpaid.rows.length > 0) {
+      throw new Error('No puedes solicitar un nuevo préstamo. Tienes cuotas pendientes en un préstamo cancelado.');
     }
 
     // Verificar si el conductor tiene una solicitud que bloquea (disbursed con préstamo cancelado no bloquea)

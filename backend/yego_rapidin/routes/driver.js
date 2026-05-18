@@ -899,21 +899,18 @@ router.get('/loan-offer', authenticate, async (req, res) => {
       return errorResponse(res, statusMessages[status] || 'Ya tienes una solicitud de préstamo en proceso.', 400);
     }
 
-    // Si tiene préstamo cancelado pero la última fecha del cronograma aún no ha llegado (pagó adelantado), debe esperar
-    const cancelledFutureDate = await pool.query(
-      `SELECT MAX(i.due_date) as last_schedule_due_date
+    // Si tiene préstamo cancelado pero con cuotas aún impagas, debe esperar. Si ya pagó todo, puede seguir.
+    const cancelledUnpaid = await pool.query(
+      `SELECT 1
        FROM module_rapidin_loans l
        JOIN module_rapidin_installments i ON i.loan_id = l.id
        WHERE l.driver_id = $1 AND l.status = 'cancelled'
-       GROUP BY l.id
-       HAVING MAX(i.due_date) > CURRENT_DATE
+         AND i.status IN ('pending', 'overdue')
        LIMIT 1`,
       [driverId]
     );
-    if (cancelledFutureDate.rows.length > 0 && cancelledFutureDate.rows[0].last_schedule_due_date) {
-      const lastDate = new Date(cancelledFutureDate.rows[0].last_schedule_due_date);
-      const fechaStr = lastDate.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
-      return errorResponse(res, `No puedes solicitar un nuevo préstamo hasta cumplir la última fecha de tu cronograma. Podrás solicitar a partir del ${fechaStr}.`, 400);
+    if (cancelledUnpaid.rows.length > 0) {
+      return errorResponse(res, 'No puedes solicitar un nuevo préstamo. Tienes cuotas pendientes en un préstamo cancelado.', 400);
     }
 
     // Obtener monto máximo según el ciclo (usa cycle de la BD)
