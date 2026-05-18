@@ -560,6 +560,8 @@ export default function YegoMiAutoRentSaleDetail() {
 
   const bonoTiempoActivo = solicitud.cronograma?.bono_tiempo_activo === true;
 
+
+  //hola
   return (
     <div className="space-y-6">
       <header className="bg-[#8B1A1A] rounded-lg p-4 lg:p-5">
