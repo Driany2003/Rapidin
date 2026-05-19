@@ -34,6 +34,68 @@ import { MIAUTO_PARK_ID } from './miautoDriverLookup.js';
 
 const PARTNER_FEES_PCT = 0.8333;
 
+// --- Helpers reutilizables para matching de driver Yango por PLACA ---
+
+/**
+ * Columnas COALESCE que dependen del LATERAL JOIN `fl` y `module_rapidin_drivers rd`.
+ * Devuelve: external_driver_id, park_id, first_name, last_name.
+ */
+function sqlYangoDriverCoalesceColumns() {
+  return `COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) AS external_driver_id,
+            COALESCE(NULLIF(TRIM(COALESCE(fl.park_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.park_id::text, '')), ''), '${MIAUTO_PARK_ID}') AS park_id,
+            COALESCE(NULLIF(TRIM(COALESCE(fl.first_name::text, '')), ''), rd.first_name) AS first_name,
+            COALESCE(NULLIF(TRIM(COALESCE(fl.last_name::text, '')), ''), rd.last_name) AS last_name,
+            fl.work_status AS yango_work_status`;
+}
+
+/**
+ * Columnas extra para detectar [PLACA-MISMATCH]: nombre original de la solicitud (sin Yango).
+ */
+function sqlSolicitudDriverNameColumns() {
+  return `rd.first_name AS solicitud_driver_first_name,
+            rd.last_name AS solicitud_driver_last_name`;
+}
+
+/**
+ * LATERAL JOIN a `drivers` (Yango) buscando por PLACA primero, luego driver_id → DNI → teléfono.
+ * Prefiere `work_status = 'working'` sobre `fired`.
+ * @param {number|string} parkParamNumber Número de parámetro SQL para park_id ($1, $2, etc.)
+ */
+function sqlYangoDriverLateralJoin(parkParamNumber) {
+  const p = parkParamNumber;
+  return `LEFT JOIN LATERAL (
+        SELECT d.driver_id, d.park_id, d.first_name, d.last_name, d.work_status
+        FROM drivers d
+        WHERE TRIM(COALESCE(d.park_id::text, '')) = $${p}
+          AND (
+            UPPER(REGEXP_REPLACE(TRIM(COALESCE(d.car_normalized_number, d.car_number, '')), '\\s', '', 'g')) =
+                UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g'))
+            OR LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g'))
+            OR (
+              REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
+                  REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g')
+              AND REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g') <> ''
+            )
+            OR (
+              REGEXP_REPLACE(COALESCE(TRIM(d.phone), ''), '[^0-9]', '', 'g') =
+                  REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g')
+              AND REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g') <> ''
+              AND CHAR_LENGTH(REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g')) >= 9
+            )
+          )
+        ORDER BY
+          CASE WHEN UPPER(REGEXP_REPLACE(TRIM(COALESCE(d.car_normalized_number, d.car_number, '')), '\\s', '', 'g')) =
+                    UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g'))
+                    AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g')) <> '' THEN 0
+               WHEN LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g')) THEN 1
+               WHEN REGEXP_REPLACE(COALESCE(TRIM(d.phone), ''), '[^0-9]', '', 'g') = REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g') THEN 3
+               ELSE 2 END,
+          CASE WHEN d.work_status = 'working' THEN 0 ELSE 1 END,
+          d.driver_id::text
+        LIMIT 1
+      ) fl ON true`;
+}
+
 /**
  * Máx. días civiles de devengo de mora desde el vencimiento (Lima). Ej. venc. 16/03 → 06/04 = 21 días.
  * Evita que la mora siga creciendo indefinidamente en columnas/Excel que suman cuota + late_fee.
@@ -974,38 +1036,19 @@ function debeAplicarMoraCuotaSemanal(status) {
 export async function getSolicitudesParaCobroSemanal() {
   const res = await query(
     `SELECT s.id AS solicitud_id, s.cronograma_id, s.cronograma_vehiculo_id, s.fecha_inicio_cobro_semanal,
+            s.placa_asignada,
             rd.id AS driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) AS external_driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.park_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.park_id::text, '')), ''), $1) AS park_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.first_name::text, '')), ''), rd.first_name) AS first_name,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.last_name::text, '')), ''), rd.last_name) AS last_name,
+            ${sqlYangoDriverCoalesceColumns()},
+            ${sqlSolicitudDriverNameColumns()},
             s.country
      FROM module_miauto_solicitud s
      LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
-     LEFT JOIN LATERAL (
-       SELECT d.driver_id, d.park_id, d.first_name, d.last_name
-       FROM drivers d
-       WHERE TRIM(COALESCE(d.park_id::text, '')) = $1
-         AND d.work_status = 'working'
-         AND (
-           LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g'))
-           OR (
-             REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
-                 REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g')
-             AND REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g') <> ''
-           )
-         )
-       ORDER BY
-         CASE WHEN LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g')) THEN 0 ELSE 1 END,
-         d.driver_id::text
-       LIMIT 1
-     ) fl ON true
-     WHERE s.status = 'aprobado'
-       AND s.cronograma_id IS NOT NULL
-       AND s.cronograma_vehiculo_id IS NOT NULL
-       AND s.fecha_inicio_cobro_semanal IS NOT NULL
-       AND COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) IS NOT NULL
-     ORDER BY s.id`,
+     ${sqlYangoDriverLateralJoin(1)}
+      WHERE s.status = 'aprobado'
+        AND s.cronograma_id IS NOT NULL
+        AND s.cronograma_vehiculo_id IS NOT NULL
+        AND s.fecha_inicio_cobro_semanal IS NOT NULL
+      ORDER BY s.id`,
     [MIAUTO_PARK_ID]
   );
   return res.rows || [];
@@ -1018,33 +1061,13 @@ export async function getSolicitudesParaCobroSemanal() {
 export async function loadMiAutoSolicitudConFlotaDrivers(solicitudId) {
   const res = await query(
     `SELECT s.id AS solicitud_id, s.cronograma_id, s.cronograma_vehiculo_id, s.fecha_inicio_cobro_semanal,
-            s.status, s.pago_estado,
+            s.status, s.pago_estado, s.placa_asignada,
             rd.id AS driver_id, COALESCE(rd.dni, s.dni) AS dni,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) AS external_driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.park_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.park_id::text, '')), ''), $2) AS park_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.first_name::text, '')), ''), rd.first_name) AS first_name,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.last_name::text, '')), ''), rd.last_name) AS last_name,
+            ${sqlYangoDriverCoalesceColumns()},
             s.country
      FROM module_miauto_solicitud s
      LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
-     LEFT JOIN LATERAL (
-       SELECT d.driver_id, d.park_id, d.first_name, d.last_name
-       FROM drivers d
-       WHERE TRIM(COALESCE(d.park_id::text, '')) = $2
-         AND d.work_status = 'working'
-         AND (
-           LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g'))
-           OR (
-             REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
-                 REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g')
-             AND REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g') <> ''
-           )
-         )
-       ORDER BY
-         CASE WHEN LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g')) THEN 0 ELSE 1 END,
-         d.driver_id::text
-       LIMIT 1
-     ) fl ON true
+     ${sqlYangoDriverLateralJoin(2)}
      WHERE s.id = $1::uuid`,
     [solicitudId, MIAUTO_PARK_ID]
   );
@@ -2391,6 +2414,8 @@ function buildCuotaSemanalApiRow(r, cronograma, vehId, options = {}) {
     mora_pendiente: moraPendienteApiOut,
     late_fee_calendar_days: lateFeeCalendarDays,
     mora_interes_periodo: moraInteresPeriodoApi,
+    /** Mora total devengada en este periodo (valor BD). Aunque ya esté pagada, muestra cuánto se acumuló. */
+    mora_acumulada: round2(parseFloat(r.late_fee) || 0),
     status: statusApi,
     moneda: d.moneda,
     pct_comision: d.pct_comision,
@@ -2726,7 +2751,8 @@ export async function getCuotasSemanalesConRacha(solicitudId, options = {}) {
   const racha = calcularRacha(cuotas);
   const fromCuotas = (cuotas || []).filter((c) => c.status === 'bonificada').length;
   const cuotasSemanalesBonificadas = Math.max(fromDb, fromCuotas);
-  return { data: cuotas, racha, cuotas_semanales_bonificadas: cuotasSemanalesBonificadas };
+  const totalCuotasCargadas = (cuotas || []).length;
+  return { data: cuotas, racha, cuotas_semanales_bonificadas: cuotasSemanalesBonificadas, total_cuotas_cargadas: totalCuotasCargadas };
 }
 
 /**
@@ -2741,36 +2767,15 @@ export async function getCuotasToCharge() {
     `SELECT c.id, c.solicitud_id, c.week_start_date, c.due_date, c.amount_due, c.paid_amount, c.late_fee, c.status,
             c.cuota_semanal, c.bono_auto, c.cobro_saldo, c.pct_comision, c.partner_fees_raw, c.moneda,
             c.fecha_ultimo_abono, c.fecha_primer_comprobante,
-            s.cronograma_id, s.fecha_inicio_cobro_semanal,
+            s.cronograma_id, s.fecha_inicio_cobro_semanal, s.placa_asignada,
             rd.id AS driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) AS external_driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.park_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.park_id::text, '')), ''), $1) AS park_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.first_name::text, '')), ''), rd.first_name) AS first_name,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.last_name::text, '')), ''), rd.last_name) AS last_name,
+            ${sqlYangoDriverCoalesceColumns()},
             s.country
      FROM module_miauto_cuota_semanal c
      INNER JOIN module_miauto_solicitud s ON s.id = c.solicitud_id
      LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
-     LEFT JOIN LATERAL (
-       SELECT d.driver_id, d.park_id, d.first_name, d.last_name
-       FROM drivers d
-       WHERE TRIM(COALESCE(d.park_id::text, '')) = $1
-         AND d.work_status = 'working'
-         AND (
-           LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g'))
-           OR (
-             REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
-                 REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g')
-             AND REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g') <> ''
-           )
-         )
-       ORDER BY
-         CASE WHEN LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g')) THEN 0 ELSE 1 END,
-         d.driver_id::text
-       LIMIT 1
-     ) fl ON true
+     ${sqlYangoDriverLateralJoin(1)}
      WHERE c.status IN ('pending', 'overdue', 'partial')
-       AND COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) IS NOT NULL
      ORDER BY c.solicitud_id, c.week_start_date ASC NULLS LAST, c.due_date ASC NULLS LAST, c.id ASC`,
     [MIAUTO_PARK_ID]
   );
@@ -2799,37 +2804,16 @@ export async function getCuotasToChargeForSolicitud(solicitudId) {
     `SELECT c.id, c.solicitud_id, c.week_start_date, c.due_date, c.amount_due, c.paid_amount, c.late_fee, c.status,
             c.cuota_semanal, c.bono_auto, c.cobro_saldo, c.pct_comision, c.partner_fees_raw, c.moneda,
             c.fecha_ultimo_abono, c.fecha_primer_comprobante,
-            s.cronograma_id, s.fecha_inicio_cobro_semanal,
+            s.cronograma_id, s.fecha_inicio_cobro_semanal, s.placa_asignada,
             rd.id AS driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) AS external_driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.park_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.park_id::text, '')), ''), $2) AS park_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.first_name::text, '')), ''), rd.first_name) AS first_name,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.last_name::text, '')), ''), rd.last_name) AS last_name,
+            ${sqlYangoDriverCoalesceColumns()},
             s.country
      FROM module_miauto_cuota_semanal c
      INNER JOIN module_miauto_solicitud s ON s.id = c.solicitud_id
      LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
-     LEFT JOIN LATERAL (
-       SELECT d.driver_id, d.park_id, d.first_name, d.last_name
-       FROM drivers d
-       WHERE TRIM(COALESCE(d.park_id::text, '')) = $2
-         AND d.work_status = 'working'
-         AND (
-           LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g'))
-           OR (
-             REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
-                 REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g')
-             AND REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g') <> ''
-           )
-         )
-       ORDER BY
-         CASE WHEN LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g')) THEN 0 ELSE 1 END,
-         d.driver_id::text
-       LIMIT 1
-     ) fl ON true
+     ${sqlYangoDriverLateralJoin(2)}
      WHERE c.solicitud_id = $1::uuid
        AND c.status IN ('pending', 'overdue', 'partial')
-       AND COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) IS NOT NULL
      ORDER BY c.week_start_date ASC NULLS LAST, c.due_date ASC NULLS LAST, c.id ASC`,
     [solicitudId, MIAUTO_PARK_ID]
   );
@@ -2861,6 +2845,8 @@ export async function processCobroCuota(
   const sharedFleetCap = options.sharedFleetBalancePEN;
   const pendingMap = options.solicitudPendingMap;
   const driverName = [cuotaRow.first_name, cuotaRow.last_name].filter(Boolean).join(' ').trim() || 'Conductor';
+  const placaInfo = cuotaRow.placa_asignada ? ` [Placa: ${String(cuotaRow.placa_asignada).trim()}]` : '';
+  const driverLabel = driverName + placaInfo;
   const amountDue = await effectiveAmountDueForMiAutoFleetRowAsync(cuotaRow);
   const paid = round2(parseFloat(cuotaRow.paid_amount) || 0);
   const lateFee = round2(parseFloat(cuotaRow.late_fee) || 0);
@@ -2935,8 +2921,8 @@ export async function processCobroCuota(
   }
 
   if (!externalDriverId) {
-    logger.warn(`Yego Mi Auto cobro: ${driverName} sin external_driver_id`);
-    return { success: false, partial: false, failed: true, reason: 'Sin external_driver_id', dryRun };
+    logger.warn(`Yego Mi Auto cobro: ${driverLabel} sin external_driver_id`);
+    return { success: false, partial: false, failed: true, reason: 'Sin external_driver_id', dryRun, driverName: driverLabel };
   }
 
   parkId = fleetParkIdForMiAuto(parkId);
@@ -2976,7 +2962,7 @@ export async function processCobroCuota(
   ) {
     balance = round2(Math.max(0, sharedFleetCap.remaining));
     if (balance <= 0) {
-      logger.warn(`Yego Mi Auto cobro: ${driverName} sin saldo Fleet (tope de cola agotado, sin nueva consulta API)`);
+      logger.warn(`Yego Mi Auto cobro: ${driverLabel} sin saldo Fleet (tope de cola agotado, sin nueva consulta API)`);
       return {
         success: false,
         partial: false,
@@ -2984,7 +2970,7 @@ export async function processCobroCuota(
         reason: 'Sin saldo disponible',
         dryRun,
         balance: 0,
-        driverName,
+        driverName: driverLabel,
         cuota_id: cuotaRow.id,
         solicitud_id: cuotaRow.solicitud_id,
       };
@@ -2992,14 +2978,14 @@ export async function processCobroCuota(
   } else {
     const balanceResult = await getContractorBalance(externalDriverId, parkId, cookieMiAuto);
     if (!balanceResult.success) {
-      logger.warn(`Yego Mi Auto cobro: sin saldo API ${driverName}: ${balanceResult.error}`);
+      logger.warn(`Yego Mi Auto cobro: sin saldo API ${driverLabel}: ${balanceResult.error}`);
       return {
         success: false,
         partial: false,
         failed: true,
         reason: balanceResult.error,
         dryRun,
-        driverName,
+        driverName: driverLabel,
         cuota_id: cuotaRow.id,
         solicitud_id: cuotaRow.solicitud_id,
       };
@@ -3007,7 +2993,7 @@ export async function processCobroCuota(
 
     balance = round2(Math.max(0, Number(balanceResult.balance) || 0));
     if (balance <= 0) {
-      logger.warn(`Yego Mi Auto cobro: ${driverName} sin saldo Fleet (balance API=${balance})`);
+      logger.warn(`Yego Mi Auto cobro: ${driverLabel} sin saldo Fleet (balance API=${balance})`);
       return {
         success: false,
         partial: false,
@@ -3015,7 +3001,7 @@ export async function processCobroCuota(
         reason: 'Sin saldo disponible',
         dryRun,
         balance,
-        driverName,
+        driverName: driverLabel,
         cuota_id: cuotaRow.id,
         solicitud_id: cuotaRow.solicitud_id,
       };

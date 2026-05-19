@@ -60,6 +60,8 @@ interface CuotaSemanal {
   late_fee_calendar_days?: number;
   /** Interés devengado del periodo (misma cifra que `late_fee` en API cuando la pendiente es 0). */
   mora_interes_periodo?: number;
+  /** Mora total acumulada en este periodo (valor BD). Aunque ya pagada, muestra cuánto se acumuló. */
+  mora_acumulada?: number;
   /** Saldo mora pendiente tras pagos (API); para neto Excel. */
   mora_pendiente?: number;
   status: string;
@@ -235,13 +237,13 @@ export default function YegoMiAutoRentSaleDetail() {
       const sym = symMoneda(monedaCuotaRow(cuotaReciente));
       const viajes = cuotaReciente.num_viajes ?? 0;
       const cuotaSemanal = Number(cuotaReciente.cuota_semanal || cuotaReciente.amount_due || 0);
+      const pagoTotal = Number(cuotaReciente.amount_due || cuotaReciente.cuota_semanal || 0);
       const pf83 = Number(cuotaReciente.partner_fees_83 || 0);
       const cobroSaldo = Number(cuotaReciente.cobro_saldo || 0);
-      const cuotaNeta = Number(cuotaReciente.cuota_neta || 0);
       const pagado = Number(cuotaReciente.paid_amount || 0);
-      const pendiente = Math.max(0, cuotaNeta - pagado);
+      const pendiente = Math.max(0, pagoTotal - pagado);
       const semana = miautoSemanaOrdinalPorVencimiento(cuotas, cuotaReciente.due_date, cuotaReciente.week_start_date);
-      detallePago = `\n\nLe compartimos el detalle de su pago:\n- Semana ${semana}: ${viajes} viajes - ${sym} ${cuotaSemanal.toFixed(2)}\n\nDESCUENTOS:\n🔹 Descuento del app: ${sym} ${pf83.toFixed(2)}\n🔹 Cobro de saldo: ${sym} ${cobroSaldo.toFixed(2)}\n\n------------------------------------------------------------------------\nPENDIENTE:\n🔹 Cuota : ${sym} ${pendiente.toFixed(2)} 🚨\n`;
+      detallePago = `\n\nLe compartimos el detalle de su pago:\n- Semana ${semana}: ${viajes} viajes - ${sym} ${cuotaSemanal.toFixed(2)}\n\nDESCUENTOS:\n🔹 Descuento del app: ${sym} ${pf83.toFixed(2)}\n🔹 Cobro de saldo: ${sym} ${cobroSaldo.toFixed(2)}\n\n------------------------------------------------------------------------\nPENDIENTE:\n🔹 Pago Total : ${sym} ${pendiente.toFixed(2)} 🚨\n`;
     }
 
     let defaultText: string;
@@ -249,9 +251,9 @@ export default function YegoMiAutoRentSaleDetail() {
     if (overdueCuotas.length > 0) {
       const lineas = overdueCuotas.slice(0, 10).map((c) => {
         const sym = symMoneda(monedaCuotaRow(c));
-        const cuotaNeta = Number(c.cuota_neta ?? c.amount_due) || 0;
+        const pagoTotal = Number(c.amount_due ?? c.cuota_semanal) || 0;
         const pagado = Number(c.paid_amount) || 0;
-        const pendiente = Math.max(0, cuotaNeta - pagado);
+        const pendiente = Math.max(0, pagoTotal - pagado);
         const moraPendiente = Number(c.mora_pendiente ?? c.late_fee) || 0;
         const total = pendiente + moraPendiente;
         const semana = miautoSemanaOrdinalPorVencimiento(cuotas, c.due_date, c.week_start_date);
@@ -266,9 +268,9 @@ export default function YegoMiAutoRentSaleDetail() {
     } else if (pendingCuotasHoy.length > 0) {
       const lineas = pendingCuotasHoy.map((c) => {
         const sym = symMoneda(monedaCuotaRow(c));
-        const cuotaNeta = Number(c.cuota_neta ?? c.amount_due) || 0;
+        const pagoTotal = Number(c.amount_due ?? c.cuota_semanal) || 0;
         const pagado = Number(c.paid_amount) || 0;
-        const pendiente = Math.max(0, cuotaNeta - pagado);
+        const pendiente = Math.max(0, pagoTotal - pagado);
         const semana = miautoSemanaOrdinalPorVencimiento(cuotas, c.due_date, c.week_start_date);
         return `• Semana ${semana}: ${sym} ${pendiente.toFixed(2)}`;
       });
@@ -1038,9 +1040,9 @@ export default function YegoMiAutoRentSaleDetail() {
                         >
                           {miautoFmtMonto(symCuota, montoPagadoDisplay)}
                         </span>
-                        {miautoNum(c.late_fee) > 0.005 ? (
+                        {miautoNum(c.mora_acumulada) > 0.005 ? (
                           <span className="text-[10px] font-normal leading-snug text-amber-700">
-                            Mora: {miautoFmtMonto(symCuota, miautoNum(c.late_fee))}
+                            Mora: {miautoFmtMonto(symCuota, miautoNum(c.mora_acumulada))}
                           </span>
                         ) : null}
                       </div>

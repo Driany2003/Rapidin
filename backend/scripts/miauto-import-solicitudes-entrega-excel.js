@@ -140,34 +140,64 @@ async function findSolicitudByPhoneLast9(phoneDigits) {
 }
 
 async function findSolicitud(placaNorm, dniDigits, phoneDigits) {
+  const matchLog = [];
   if (placaNorm) {
     const r = await query(
-      `SELECT s.id FROM module_miauto_solicitud s
+      `SELECT s.id, REGEXP_REPLACE(COALESCE(TRIM(s.dni),''), '[^0-9]', '', 'g') AS sol_dni,
+              REGEXP_REPLACE(COALESCE(TRIM(s.phone),''), '[^0-9]', '', 'g') AS sol_phone,
+              s.placa_asignada
+       FROM module_miauto_solicitud s
        WHERE REGEXP_REPLACE(UPPER(TRIM(COALESCE(s.placa_asignada,''))), '\\s', '', 'g') = $1
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
       [placaNorm]
     );
-    if (r.rows[0]) return r.rows[0];
+    if (r.rows[0]) {
+      const solDni = r.rows[0].sol_dni || '';
+      const solPhone = r.rows[0].sol_phone || '';
+      if (dniDigits && dniDigits.length >= 4 && solDni && solDni !== dniDigits) {
+        console.warn(`[MATCH-WARN] Placa ${placaNorm} coincide con solicitud ${r.rows[0].id} pero DNI difiere (Excel: ${dniDigits}, BD: ${solDni}). Verificar manualmente.`);
+      }
+      if (phoneDigits && phoneDigits.length >= 7 && solPhone && !solPhone.includes(phoneDigits.slice(-9))) {
+        console.warn(`[MATCH-WARN] Placa ${placaNorm} coincide con solicitud ${r.rows[0].id} pero teléfono difiere (Excel: ${phoneDigits}, BD: ${solPhone}). Verificar manualmente.`);
+      }
+      return { ...r.rows[0], matchBy: 'placa' };
+    }
   }
   if (dniDigits && dniDigits.length >= 4) {
     const r2 = await query(
-      `SELECT s.id FROM module_miauto_solicitud s
+      `SELECT s.id, REGEXP_REPLACE(COALESCE(TRIM(s.dni),''), '[^0-9]', '', 'g') AS sol_dni,
+              REGEXP_REPLACE(COALESCE(TRIM(s.phone),''), '[^0-9]', '', 'g') AS sol_phone,
+              s.placa_asignada
+       FROM module_miauto_solicitud s
        LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
        WHERE REGEXP_REPLACE(COALESCE(TRIM(s.dni),''), '[^0-9]', '', 'g') = $1
           OR REGEXP_REPLACE(COALESCE(TRIM(rd.dni),''), '[^0-9]', '', 'g') = $1
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
       [dniDigits]
     );
-    if (r2.rows[0]) return r2.rows[0];
+    if (r2.rows[0]) {
+      if (placaNorm && r2.rows[0].placa_asignada && String(r2.rows[0].placa_asignada).trim().toUpperCase() !== placaNorm) {
+        console.warn(`[MATCH-WARN] DNI ${dniDigits} coincide con solicitud ${r2.rows[0].id} pero placa difiere (Excel: ${placaNorm}, BD: ${r2.rows[0].placa_asignada}). Verificar manualmente.`);
+      }
+      return { ...r2.rows[0], matchBy: 'dni' };
+    }
   }
   if (phoneDigits && phoneDigits.length >= 7) {
     const r3 = await query(
-      `SELECT s.id FROM module_miauto_solicitud s
+      `SELECT s.id, REGEXP_REPLACE(COALESCE(TRIM(s.phone),''), '[^0-9]', '', 'g') AS sol_phone,
+              s.placa_asignada, s.dni
+       FROM module_miauto_solicitud s
        WHERE REGEXP_REPLACE(COALESCE(TRIM(s.phone),''), '[^0-9]', '', 'g') LIKE '%' || $1
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
       [phoneDigits.slice(-9)]
     );
-    return r3.rows[0] || null;
+    if (r3.rows[0]) {
+      if (placaNorm && r3.rows[0].placa_asignada && String(r3.rows[0].placa_asignada).trim().toUpperCase() !== placaNorm) {
+        console.warn(`[MATCH-WARN] Teléfono ${phoneDigits} coincide con solicitud ${r3.rows[0].id} pero placa difiere (Excel: ${placaNorm}, BD: ${r3.rows[0].placa_asignada}). Verificar manualmente.`);
+      }
+      return { ...r3.rows[0], matchBy: 'phone' };
+    }
+    return null;
   }
   return null;
 }

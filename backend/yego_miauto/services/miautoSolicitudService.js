@@ -337,7 +337,10 @@ export const listAlquilerVenta = async (filters = {}) => {
                   COUNT(*)::int AS total_cuotas,
                   COUNT(*) FILTER (WHERE c.status IN ('paid', 'bonificada'))::int AS cuotas_pagadas,
                   COUNT(*) FILTER (WHERE c.status = 'overdue')::int AS cuotas_vencidas,
-                  COALESCE(SUM(c.paid_amount), 0)::decimal AS total_pagado
+                  COALESCE(SUM(c.paid_amount) FILTER (WHERE UPPER(COALESCE(c.moneda,'PEN')) = 'PEN'), 0)::decimal AS total_pagado_pen,
+                  COALESCE(SUM(c.paid_amount) FILTER (WHERE UPPER(COALESCE(c.moneda,'PEN')) = 'USD'), 0)::decimal AS total_pagado_usd,
+                  COALESCE(SUM(c.paid_amount), 0)::decimal AS total_pagado,
+                  MODE() WITHIN GROUP (ORDER BY UPPER(COALESCE(c.moneda,'PEN'))) AS moneda_dominante
            FROM module_miauto_cuota_semanal c
            WHERE c.solicitud_id = ANY($1::uuid[])
            GROUP BY c.solicitud_id`,
@@ -352,6 +355,9 @@ export const listAlquilerVenta = async (filters = {}) => {
       cuotas_pagadas: r.cuotas_pagadas,
       cuotas_vencidas: r.cuotas_vencidas,
       total_pagado: parseFloat(r.total_pagado) || 0,
+      total_pagado_pen: parseFloat(r.total_pagado_pen) || 0,
+      total_pagado_usd: parseFloat(r.total_pagado_usd) || 0,
+      moneda_dominante: r.moneda_dominante === 'USD' ? 'USD' : 'PEN',
     };
   }
 
@@ -382,13 +388,20 @@ export const listAlquilerVenta = async (filters = {}) => {
       cuotas_pagadas: 0,
       cuotas_vencidas: 0,
       total_pagado: 0,
+      total_pagado_pen: 0,
+      total_pagado_usd: 0,
+      moneda_dominante: 'PEN',
     };
     const cuotasPlan = r.vehiculo_cuotas_semanales != null ? parseInt(r.vehiculo_cuotas_semanales, 10) || 0 : 0;
     const crono = r.cronograma_id ? cronogramaCache.get(String(r.cronograma_id)) : null;
-    const moneda =
+    const monedaCronograma =
       crono && r.cronograma_vehiculo_id
         ? getMonedaCuotaSemanalPorVehiculo(crono, r.cronograma_vehiculo_id)
         : 'PEN';
+    const moneda =
+      summary.total_cuotas > 0 && summary.moneda_dominante
+        ? summary.moneda_dominante
+        : monedaCronograma;
     return {
       id: r.id,
       dni: r.dni,
@@ -407,6 +420,8 @@ export const listAlquilerVenta = async (filters = {}) => {
       cuotas_pagadas: summary.cuotas_pagadas,
       cuotas_vencidas: summary.cuotas_vencidas,
       total_pagado: summary.total_pagado,
+      total_pagado_pen: summary.total_pagado_pen,
+      total_pagado_usd: summary.total_pagado_usd,
       moneda,
     };
   });
@@ -604,6 +619,12 @@ export const updateSolicitud = async (id, data, userId = null) => {
     const obsDesistido = 'El conductor desistió.' + (data.withdrawal_reason && String(data.withdrawal_reason).trim() ? ' Motivo: ' + String(data.withdrawal_reason).trim() : '');
     updates.push(`observations = $${n}`);
     params.push(obsDesistido);
+    n += 1;
+  }
+  if (data.status === 'desactivado') {
+    const obsDesactivado = 'Solicitud desactivada por administración.' + (data.observations ? ' ' + String(data.observations).trim() : '');
+    updates.push(`observations = $${n}`);
+    params.push(obsDesactivado);
     n += 1;
   }
   if (data.apps !== undefined) {

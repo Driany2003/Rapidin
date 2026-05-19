@@ -22,7 +22,7 @@ type AdminProduct = 'rapidin' | 'yego-mi-auto' | 'yego-mi-moto';
 type MenuItem = { text: string; icon: typeof LayoutDashboard; path: string };
 type MenuSection = { title: string; items: MenuItem[] };
 
-const ADMIN_MENU: Record<AdminProduct, { newRequest: MenuItem; sections: MenuSection[]; subtitle: string; dashboardPath: string }> = {
+const ADMIN_MENU: Record<AdminProduct, { newRequest?: MenuItem; sections: MenuSection[]; subtitle: string; dashboardPath: string }> = {
   rapidin: {
     newRequest: { text: 'Nueva solicitud', icon: PlusCircle, path: '/admin/loan-requests/new' },
     subtitle: 'Yego Rapidín',
@@ -43,11 +43,9 @@ const ADMIN_MENU: Record<AdminProduct, { newRequest: MenuItem; sections: MenuSec
     ],
   },
   'yego-mi-auto': {
-    newRequest: { text: 'Nueva solicitud Mi Auto', icon: PlusCircle, path: '/admin/yego-mi-auto/loan-requests/new' },
     subtitle: 'Yego mi auto',
-    dashboardPath: '/admin/yego-mi-auto/dashboard',
+    dashboardPath: '/admin/yego-mi-auto/requests',
     sections: [
-      { title: 'Principal', items: [{ text: 'Dashboard', icon: LayoutDashboard, path: '/admin/yego-mi-auto/dashboard' }] },
       { title: 'Operación', items: [
         { text: 'Solicitudes', icon: FileText, path: '/admin/yego-mi-auto/requests' },
         { text: 'Alquiler / Venta', icon: Banknote, path: '/admin/yego-mi-auto/rent-sale' },
@@ -116,9 +114,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
       </div>
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        <div className="px-2 pt-1 pb-1">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left">— Menú —</p>
-        </div>
+        {newRequestItem && (
         <Link
           to={newRequestItem.path}
           onClick={() => setMobileOpen(false)}
@@ -131,10 +127,11 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           <PlusCircle className="w-5 h-5" />
           <span className="font-medium">{newRequestItem.text}</span>
         </Link>
+        )}
         {sections.map((section) => (
           <div key={section.title} className="pt-4">
             <p className="px-2 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider text-left">
-              — {section.title} —
+              {section.title}
             </p>
             <div className="space-y-0.5">
               {section.items.map((item) => {

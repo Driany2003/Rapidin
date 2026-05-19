@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { MIAUTO_NO_CACHE_HEADERS, isAxiosAbortError } from '../../utils/miautoApiUtils';
-import { FileText, Eye, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { FileText, Eye, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ban } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDate } from '../../utils/date';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { RapidinSearchField } from '../../components/RapidinSearchField';
+import toast from 'react-hot-toast';
 
 interface Solicitud {
   id: string;
@@ -40,6 +41,7 @@ const STATUS_LABELS: Record<string, string> = {
   rechazado: 'Rechazado',
   desistido: 'Desistido',
   aprobado: 'Aprobado',
+  desactivado: 'Desactivado',
 };
 
 const STATUS_CLASS: Record<string, string> = {
@@ -48,6 +50,7 @@ const STATUS_CLASS: Record<string, string> = {
   rechazado: 'bg-red-100 text-red-800',
   desistido: 'bg-gray-100 text-gray-700',
   aprobado: 'bg-green-100 text-green-800',
+  desactivado: 'bg-slate-200 text-slate-600',
 };
 
 const STATUS_OPTIONS = [{ value: '', label: 'Todos' }, ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }))];
@@ -192,10 +195,12 @@ function SolicitudesFilters({
 function SolicitudesTable({
   solicitudes,
   onViewDetail,
+  onDesactivar,
   isLoading,
 }: {
   solicitudes: Solicitud[];
   onViewDetail: (id: string) => void;
+  onDesactivar: (id: string) => void;
   isLoading: boolean;
 }) {
   return (
@@ -234,14 +239,27 @@ function SolicitudesTable({
                   {s.created_at ? formatDate(s.created_at, 'es-ES') : '—'}
                 </td>
                 <td className="px-4 py-3">
-                  <button
-                    type="button"
-                    onClick={() => onViewDetail(s.id)}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-[#8B1A1A] hover:bg-red-50 rounded-lg"
-                  >
-                    <Eye className="w-4 h-4" />
-                    Ver más detalle
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onViewDetail(s.id)}
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-[#8B1A1A] hover:bg-red-50 rounded-lg"
+                    >
+                      <Eye className="w-4 h-4" />
+                      Ver más detalle
+                    </button>
+                    {s.status !== 'desactivado' && (
+                      <button
+                        type="button"
+                        onClick={() => onDesactivar(s.id)}
+                        className="inline-flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-lg"
+                        title="Desactivar solicitud"
+                      >
+                        <Ban className="w-4 h-4" />
+                        Desactivar
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -414,6 +432,18 @@ export default function YegoMiAutoSolicitudes() {
     });
   }, [totalFiltered]);
 
+  const handleDesactivar = useCallback(async (solId: string) => {
+    try {
+      await api.post(`/miauto/solicitudes/${solId}/desactivar`, { motivo: '' });
+      toast.success('Solicitud desactivada');
+      const ac = new AbortController();
+      fetchSolicitudesAllPages(ac.signal);
+      return () => ac.abort();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Error al desactivar');
+    }
+  }, [fetchSolicitudesAllPages]);
+
   const handleLimitChange = useCallback((newLimit: number) => {
     setPagination((p) => ({ ...p, limit: newLimit, page: 1 }));
   }, []);
@@ -474,6 +504,7 @@ export default function YegoMiAutoSolicitudes() {
           <SolicitudesTable
             solicitudes={displaySolicitudes}
             onViewDetail={(id) => navigate(`/admin/yego-mi-auto/requests/${id}`)}
+            onDesactivar={handleDesactivar}
             isLoading={false}
           />
           {totalFiltered > 0 && (

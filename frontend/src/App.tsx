@@ -31,14 +31,12 @@ import QuieroMiYegoAuto from './pages/driver/QuieroMiYegoAuto';
 import { DRIVER_MI_AUTO_ENABLED } from './components/DriverSidebar';
 import SelectFlota from './pages/driver/SelectFlota';
 import NewLoanRequest from './pages/yegoRapidin/NewLoanRequest';
-import YegoMiAutoDashboard from './pages/yegoMiAuto/YegoMiAutoDashboard';
 import YegoMiAutoFlotas from './pages/yegoMiAuto/YegoMiAutoFlotas';
 import YegoMiAutoConfig from './pages/yegoMiAuto/YegoMiAutoConfig';
 import YegoMiAutoAnalysis from './pages/yegoMiAuto/YegoMiAutoAnalysis';
 import YegoMiAutoPayments from './pages/yegoMiAuto/YegoMiAutoPayments';
 import YegoMiAutoLoans from './pages/yegoMiAuto/YegoMiAutoLoans';
 import YegoMiAutoRentSaleDetail from './pages/yegoMiAuto/YegoMiAutoRentSaleDetail';
-import YegoMiAutoNewRequest from './pages/yegoMiAuto/YegoMiAutoNewRequest';
 import YegoMiAutoSolicitudes from './pages/yegoMiAuto/YegoMiAutoSolicitudes';
 import YegoMiAutoSolicitudDetail from './pages/yegoMiAuto/YegoMiAutoSolicitudDetail';
 import YegoMiMotoDashboard from './pages/yegoMiMoto/YegoMiMotoDashboard';
@@ -243,8 +241,7 @@ function App() {
               }
             />
             {/* Yego mi auto (mismo Layout, menú distinto según ruta) */}
-            <Route path="/admin/yego-mi-auto" element={<Navigate to="/admin/yego-mi-auto/dashboard" replace />} />
-            <Route path="/admin/yego-mi-auto/dashboard" element={<ProtectedRoute><Layout><YegoMiAutoDashboard /></Layout></ProtectedRoute>} />
+            <Route path="/admin/yego-mi-auto" element={<Navigate to="/admin/yego-mi-auto/requests" replace />} />
             <Route path="/admin/yego-mi-auto/flotas" element={<ProtectedRoute><Layout><YegoMiAutoFlotas /></Layout></ProtectedRoute>} />
             <Route path="/admin/yego-mi-auto/requests" element={<ProtectedRoute><Layout><YegoMiAutoSolicitudes /></Layout></ProtectedRoute>} />
             <Route path="/admin/yego-mi-auto/requests/:id" element={<ProtectedRoute><Layout><YegoMiAutoSolicitudDetail /></Layout></ProtectedRoute>} />
@@ -256,7 +253,6 @@ function App() {
             <Route path="/admin/yego-mi-auto/rent-sale" element={<ProtectedRoute><Layout><YegoMiAutoLoans /></Layout></ProtectedRoute>} />
             <Route path="/admin/yego-mi-auto/rent-sale/:id" element={<ProtectedRoute><Layout><YegoMiAutoRentSaleDetail /></Layout></ProtectedRoute>} />
             <Route path="/admin/yego-mi-auto/loans" element={<Navigate to="/admin/yego-mi-auto/rent-sale" replace />} />
-            <Route path="/admin/yego-mi-auto/loan-requests/new" element={<ProtectedRoute><Layout><YegoMiAutoNewRequest /></Layout></ProtectedRoute>} />
             {/* Yego mi moto */}
             <Route path="/admin/yego-mi-moto" element={<Navigate to="/admin/yego-mi-moto/dashboard" replace />} />
             <Route path="/admin/yego-mi-moto/dashboard" element={<ProtectedRoute><Layout><YegoMiMotoDashboard /></Layout></ProtectedRoute>} />

@@ -48,6 +48,8 @@ function normalizePhone(value) {
   return String(value).replace(/\D/g, '');
 }
 
+const MAX_CUOTA_BLOCKS = 260;
+
 function parseArgs(argv) {
   const dryRun = argv.includes('--dry-run');
   const deleteFirst = argv.includes('--delete-first');
@@ -181,7 +183,18 @@ function parseMontoYMoneda(montoStr, defaultMoneda) {
 function parseMontoCell(cell, defaultMoneda) {
   if (!cell) throw new Error('Sin celda monto');
   const v = cell.v;
-  if (typeof v === 'number') return { monto: round2(v), moneda: defaultMoneda || 'PEN' };
+  if (typeof v === 'number') {
+    if (cell.w != null && String(cell.w).trim() !== '') {
+      const w = String(cell.w).trim().toUpperCase();
+      if (/^S\/?\.?\s*\d/i.test(w) || /^SOLES?\b/i.test(w)) {
+        return { monto: round2(v), moneda: 'PEN' };
+      }
+      if (/^\$/.test(w) || /^USD\b/i.test(w) || /^US\$/.test(w) || /^D[OÓ]L/i.test(w)) {
+        return { monto: round2(v), moneda: 'USD' };
+      }
+    }
+    return { monto: round2(v), moneda: defaultMoneda || 'PEN' };
+  }
   return parseMontoYMoneda(cellToString(cell), defaultMoneda);
 }
 
@@ -210,13 +223,25 @@ async function loadCronogramasForMoneda() {
 async function findSolicitud(placaNorm, dniDigits, phoneDigits) {
   if (placaNorm) {
     const r = await query(
-      `SELECT s.id, s.cronograma_id, s.cronograma_vehiculo_id, s.fecha_inicio_cobro_semanal, s.placa_asignada
+      `SELECT s.id, s.cronograma_id, s.cronograma_vehiculo_id, s.fecha_inicio_cobro_semanal, s.placa_asignada,
+              REGEXP_REPLACE(COALESCE(TRIM(s.dni),''), '[^0-9]', '', 'g') AS sol_dni,
+              REGEXP_REPLACE(COALESCE(TRIM(s.phone),''), '[^0-9]', '', 'g') AS sol_phone
        FROM module_miauto_solicitud s
        WHERE REGEXP_REPLACE(UPPER(TRIM(COALESCE(s.placa_asignada,''))), '\\s', '', 'g') = $1
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
       [placaNorm]
     );
-    if (r.rows[0]) return r.rows[0];
+    if (r.rows[0]) {
+      const solDni = r.rows[0].sol_dni || '';
+      const solPhone = r.rows[0].sol_phone || '';
+      if (dniDigits && dniDigits.length >= 4 && solDni && solDni !== dniDigits) {
+        console.warn(`[MATCH-WARN] Placa ${placaNorm} coincide con solicitud ${r.rows[0].id} pero DNI difiere (Excel: ${dniDigits}, BD: ${solDni}).`);
+      }
+      if (phoneDigits && phoneDigits.length >= 7 && solPhone && !solPhone.includes(phoneDigits.slice(-9))) {
+        console.warn(`[MATCH-WARN] Placa ${placaNorm} coincide con solicitud ${r.rows[0].id} pero teléfono difiere (Excel: ${phoneDigits}, BD: ${solPhone}).`);
+      }
+      return r.rows[0];
+    }
   }
   if (dniDigits && dniDigits.length >= 4) {
     const r2 = await query(
@@ -228,7 +253,12 @@ async function findSolicitud(placaNorm, dniDigits, phoneDigits) {
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
       [dniDigits]
     );
-    if (r2.rows[0]) return r2.rows[0];
+    if (r2.rows[0]) {
+      if (placaNorm && r2.rows[0].placa_asignada && String(r2.rows[0].placa_asignada).trim().toUpperCase() !== placaNorm) {
+        console.warn(`[MATCH-WARN] DNI ${dniDigits} coincide con solicitud ${r2.rows[0].id} pero placa difiere (Excel: ${placaNorm}, BD: ${r2.rows[0].placa_asignada}).`);
+      }
+      return r2.rows[0];
+    }
   }
   if (phoneDigits && phoneDigits.length >= 7) {
     const r3 = await query(
@@ -238,7 +268,13 @@ async function findSolicitud(placaNorm, dniDigits, phoneDigits) {
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
       [phoneDigits.slice(-9)]
     );
-    return r3.rows[0] || null;
+    if (r3.rows[0]) {
+      if (placaNorm && r3.rows[0].placa_asignada && String(r3.rows[0].placa_asignada).trim().toUpperCase() !== placaNorm) {
+        console.warn(`[MATCH-WARN] Teléfono ${phoneDigits} coincide con solicitud ${r3.rows[0].id} pero placa difiere (Excel: ${placaNorm}, BD: ${r3.rows[0].placa_asignada}).`);
+      }
+      return r3.rows[0];
+    }
+    return null;
   }
   return null;
 }
@@ -321,7 +357,6 @@ async function main() {
     skipped_bad_fecha: 0,
     skipped_bad_monto: 0,
     db_inserts: 0,
-    db_updates: 0,
     warnings: [],
     errors: [],
   };
@@ -357,7 +392,7 @@ async function main() {
         : 'PEN';
     const fiYmd = ymdFromFi(sol.fecha_inicio_cobro_semanal);
 
-    for (let k = 0; k < 46; k++) {
+    for (let k = 0; k < MAX_CUOTA_BLOCKS; k++) {
       const c0 = CUOTA_BASE_COL + k * 4;
       const cFecha = getCell(ws, row, c0);
       const cViajes = getCell(ws, row, c0 + 1);
@@ -451,51 +486,7 @@ async function main() {
 
       if (dryRun) continue;
 
-      const ex = await query(
-        `SELECT id FROM module_miauto_cuota_semanal
-         WHERE solicitud_id = $1::uuid AND week_start_date = $2::date`,
-        [sol.id, weekStart]
-      );
-
-      if (ex.rows.length > 0) {
-        await query(
-          `UPDATE module_miauto_cuota_semanal SET
-            due_date = $1::date,
-            num_viajes = $2,
-            partner_fees_raw = $3,
-            partner_fees_83 = $4,
-            bono_auto = $5,
-            cuota_semanal = $6,
-            amount_due = $7,
-            paid_amount = $8,
-            status = $9,
-            moneda = $10,
-            pct_comision = $11,
-            cobro_saldo = $12,
-            late_fee = $13,
-            montos_fuente = 'excel',
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = $14::uuid`,
-          [
-            payload.due_date,
-            payload.num_viajes,
-            payload.partner_fees_raw,
-            payload.partner_fees_83,
-            payload.bono_auto,
-            payload.cuota_semanal,
-            payload.amount_due,
-            payload.paid_amount,
-            payload.status,
-            payload.moneda,
-            payload.pct_comision,
-            payload.cobro_saldo,
-            payload.late_fee,
-            ex.rows[0].id,
-          ]
-        );
-        stats.db_updates++;
-        touchedSolicitudes.add(String(sol.id));
-      } else {
+      try {
         await query(
           `INSERT INTO module_miauto_cuota_semanal
             (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, bono_auto,
@@ -519,9 +510,39 @@ async function main() {
             payload.late_fee,
           ]
         );
-        stats.db_inserts++;
-        touchedSolicitudes.add(String(sol.id));
+      } catch (e) {
+        if (e && e.code === '23505') {
+          const fallbackWs = ymd; // usar la fecha real del Excel como week_start
+          console.warn(`[DUP-WS] Fila ${row} bloque ${k+1}: week_start ${weekStart} ya existe. Reintentando con fecha real del Excel: ${fallbackWs}`);
+          await query(
+            `INSERT INTO module_miauto_cuota_semanal
+              (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, bono_auto,
+               cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, late_fee, montos_fuente)
+             VALUES ($1::uuid, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'excel')`,
+            [
+              sol.id,
+              fallbackWs,
+              payload.due_date,
+              payload.num_viajes,
+              payload.partner_fees_raw,
+              payload.partner_fees_83,
+              payload.bono_auto,
+              payload.cuota_semanal,
+              payload.amount_due,
+              payload.paid_amount,
+              payload.status,
+              payload.moneda,
+              payload.pct_comision,
+              payload.cobro_saldo,
+              payload.late_fee,
+            ]
+          );
+        } else {
+          throw e;
+        }
       }
+      stats.db_inserts++;
+      touchedSolicitudes.add(String(sol.id));
     }
   }
 
@@ -532,6 +553,25 @@ async function main() {
       } catch (e) {
         stats.errors.push({ solicitud_id: sid, msg: String(e.message || e) });
       }
+    }
+
+    for (const sid of touchedSolicitudes) {
+      const countRes = await query(
+        `SELECT COUNT(*)::int AS n FROM module_miauto_cuota_semanal WHERE solicitud_id = $1::uuid AND (week_start_date IS NOT NULL OR due_date IS NOT NULL)`,
+        [sid]
+      );
+      const solRes = await query(
+        `SELECT v.cuotas_semanales FROM module_miauto_solicitud s
+         JOIN module_miauto_cronograma_vehiculo v ON v.id = s.cronograma_vehiculo_id
+         WHERE s.id = $1::uuid`,
+        [sid]
+      );
+      const expected = solRes.rows[0] ? parseInt(solRes.rows[0].cuotas_semanales, 10) || 0 : 0;
+      const actual = countRes.rows[0]?.n || 0;
+      if (expected > 0 && actual !== expected) {
+        console.warn(`[CUOTAS-COUNT] Solicitud ${sid}: esperadas ${expected} cuotas (plan vehículo), cargadas ${actual}. Diferencia: ${expected - actual}.`);
+      }
+      console.log(`[CUOTAS-COUNT] Solicitud ${sid}: ${actual} cuotas cargadas (plan: ${expected || 'desconocido'}).`);
     }
   }
 

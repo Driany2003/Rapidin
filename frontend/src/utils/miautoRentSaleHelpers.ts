@@ -467,10 +467,11 @@ export function parseCuotasSemanalesPayload(resCuotas: { data?: unknown }): {
   cuotas: unknown[];
   racha: number | null;
   cuotasSemanalesBonificadas: number;
+  totalCuotasCargadas: number;
 } {
   const bodyCuotas = resCuotas.data ?? {};
   const inner = (bodyCuotas as { data?: unknown }).data ?? bodyCuotas;
-  const innerObj = inner as { data?: unknown; racha?: unknown; cuotas_semanales_bonificadas?: unknown };
+  const innerObj = inner as { data?: unknown; racha?: unknown; cuotas_semanales_bonificadas?: unknown; total_cuotas_cargadas?: unknown };
   const raw = innerObj?.data ?? innerObj;
   const list = Array.isArray(raw) ? raw : ((raw as { data?: unknown[] })?.data ?? []);
   const cuotas = Array.isArray(list) ? list : [];
@@ -487,5 +488,8 @@ export function parseCuotasSemanalesPayload(resCuotas: { data?: unknown }): {
   const cuotasSemanalesBonificadas =
     typeof bRaw === 'number' ? Math.max(0, Math.floor(bRaw)) : 0;
 
-  return { cuotas, racha, cuotasSemanalesBonificadas };
+  const tRaw = innerObj?.total_cuotas_cargadas;
+  const totalCuotasCargadas = typeof tRaw === 'number' ? Math.max(0, Math.floor(tRaw)) : cuotas.length;
+
+  return { cuotas, racha, cuotasSemanalesBonificadas, totalCuotasCargadas };
 }

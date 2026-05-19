@@ -475,6 +475,21 @@ router.post('/solicitudes/:id/no-vino-rechazar', validateUUID, async (req, res) 
   }
 });
 
+router.post('/solicitudes/:id/desactivar', validateUUID, async (req, res) => {
+  try {
+    const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+    const solicitud = await updateSolicitud(req.params.id, {
+      status: 'desactivado',
+      observations: motivo || undefined,
+    }, req.user?.id);
+    if (!solicitud) return errorResponse(res, 'Solicitud no encontrada', 404);
+    return successResponse(res, solicitud, 'Solicitud desactivada');
+  } catch (error) {
+    logger.error('Error desactivando solicitud Mi Auto:', error);
+    return errorResponse(res, error.message || 'Error al desactivar solicitud', 400);
+  }
+});
+
 router.post('/solicitudes/:id/send-whatsapp', validateUUID, async (req, res) => {
   try {
     const sol = await getSolicitudById(req.params.id);
@@ -646,12 +661,13 @@ router.get('/solicitudes/:id/cuotas-semanales', validateUUID, async (req, res) =
     if (!(await ensureSolicitudOwnedByDriver(req.params.id, req, res))) return;
     /** Conductor: saldos sin descontar comprobantes pendientes; staff/admin: sí reflejan monto declarado en revisión. */
     const incluirAbonoComprobantePendiente = req.user?.role !== 'driver';
-    const { data: list, racha, cuotas_semanales_bonificadas } = await getCuotasSemanalesConRacha(req.params.id, {
+    const { data: list, racha, cuotas_semanales_bonificadas, total_cuotas_cargadas } = await getCuotasSemanalesConRacha(req.params.id, {
       incluirAbonoComprobantePendiente,
     });
     const rachaNum = typeof racha === 'number' && Number.isFinite(racha) ? Math.max(0, Math.floor(racha)) : 0;
     const bonoAplicado = typeof cuotas_semanales_bonificadas === 'number' && Number.isFinite(cuotas_semanales_bonificadas) ? Math.max(0, Math.floor(cuotas_semanales_bonificadas)) : 0;
-    return successResponse(res, { data: list, racha: rachaNum, cuotas_semanales_bonificadas: bonoAplicado });
+    const totalCargadas = typeof total_cuotas_cargadas === 'number' ? Math.max(0, Math.floor(total_cuotas_cargadas)) : 0;
+    return successResponse(res, { data: list, racha: rachaNum, cuotas_semanales_bonificadas: bonoAplicado, total_cuotas_cargadas: totalCargadas });
   } catch (error) {
     logger.error('Error listando cuotas semanales Mi Auto:', error);
     return errorResponse(res, error.message || 'Error al listar cuotas semanales', 500);

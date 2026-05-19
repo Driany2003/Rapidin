@@ -85,10 +85,21 @@ async function ensureCuotaOneSolicitud(sol, cuotaWeekMonday, dateFrom, dateTo, o
   }
 
   const esPrimera = isSemanaDepositoMiAuto(cuotaWeekMonday, sol.fecha_inicio_cobro_semanal);
+  const placaStr = sol.placa_asignada ? ` [Placa: ${String(sol.placa_asignada).trim()}]` : '';
+  const driverLabel = [sol.first_name, sol.last_name]
+    .filter(Boolean)
+    .join(' ')
+    .trim() || 'Conductor';
+  const sinDriverYango = !sol.external_driver_id || String(sol.external_driver_id).trim() === '';
+
   let incomeResult;
-  if (esPrimera) {
+  if (esPrimera || sinDriverYango) {
     incomeResult = { success: true, count_completed: 0, partner_fees: 0 };
-    logger.info(`Mi Auto: solicitud ${sol.solicitud_id} primera cuota semanal — sin consulta Yango`);
+    if (sinDriverYango && !esPrimera) {
+      logger.info(`Mi Auto: solicitud ${sol.solicitud_id} sin external_driver_id en Yango — se genera cuota con 0 viajes y 0 partner_fees (${driverLabel}${placaStr})`);
+    } else {
+      logger.info(`Mi Auto: solicitud ${sol.solicitud_id} primera cuota semanal — sin consulta Yango (${driverLabel}${placaStr})`);
+    }
   } else {
     incomeResult = await getDriverIncomeWithRetries(
       dateFrom,
@@ -99,13 +110,28 @@ async function ensureCuotaOneSolicitud(sol, cuotaWeekMonday, dateFrom, dateTo, o
     );
     if (!incomeResult.success) {
       if (strictIncomeFailure) {
-        logger.warn(`Mi Auto: income fallido solicitud ${sol.solicitud_id}: ${incomeResult.error}`);
+        logger.warn(`Mi Auto: income fallido solicitud ${sol.solicitud_id}${placaStr}: ${incomeResult.error}`);
         return { outcome: 'income_failed', incomeError: incomeResult.error };
       }
       logger.warn(
-        `Mi Auto: income fallido solicitud ${sol.solicitud_id}: ${incomeResult.error} — se genera cuota con 0 viajes y 0 partner_fees (sin datos Yango)`
+        `Mi Auto: income fallido solicitud ${sol.solicitud_id}${placaStr}: ${incomeResult.error} — se genera cuota con 0 viajes y 0 partner_fees (sin datos Yango)`
       );
       incomeResult = { success: true, count_completed: 0, partner_fees: 0 };
+    } else {
+      const yangoDriverName = [sol.first_name, sol.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      const solicitudDriverName = [sol.solicitud_driver_first_name, sol.solicitud_driver_last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (sol.yango_work_status === 'fired') {
+        logger.warn(`Mi Auto: [PLACA-DRIVER-FIRED] solicitud ${sol.solicitud_id}${placaStr}: driver Yango "${yangoDriverName}" está FIRED. Se usan viajes=0 (sin driver activo).`);
+        incomeResult = { success: true, count_completed: 0, partner_fees: 0 };
+      } else if (yangoDriverName && solicitudDriverName && yangoDriverName.toLowerCase() !== solicitudDriverName.toLowerCase()) {
+        logger.warn(`Mi Auto: [PLACA-MISMATCH] solicitud ${sol.solicitud_id}${placaStr}: driver en Yango es "${yangoDriverName}" pero la solicitud esperaba "${solicitudDriverName}". Se usan los viajes del driver Yango igual.`);
+      }
     }
   }
 

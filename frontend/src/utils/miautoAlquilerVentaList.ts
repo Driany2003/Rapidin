@@ -26,7 +26,9 @@ export interface AlquilerVentaListItem {
   cuotas_pagadas: number;
   cuotas_vencidas: number;
   total_pagado: number;
-  /** Moneda de las cuotas semanales (regla cronograma). */
+  total_pagado_pen?: number;
+  total_pagado_usd?: number;
+  /** Moneda dominante de las cuotas reales (o cronograma si no hay cuotas). */
   moneda?: 'USD' | 'PEN';
 }
 
@@ -50,8 +52,14 @@ export function symMoneda(moneda?: string | null): string {
   return monedaCuotasLabel(moneda) === 'USD' ? '$' : 'S/.';
 }
 
-/** Total pagado en cuotas semanales con prefijo de moneda. */
+/** Total pagado en cuotas semanales con prefijo de moneda real (separa USD y PEN si hay mezcla). */
 export function formatTotalPagadoList(row: AlquilerVentaListItem): string {
-  const n = row.total_pagado ?? 0;
-  return `${symMoneda(row.moneda)} ${n.toFixed(2)}`;
+  const pen = row.total_pagado_pen ?? 0;
+  const usd = row.total_pagado_usd ?? 0;
+  if (pen > 0 && usd > 0) {
+    return `S/. ${pen.toFixed(2)} · $ ${usd.toFixed(2)}`;
+  }
+  if (usd > 0) return `$ ${usd.toFixed(2)}`;
+  if (pen > 0) return `S/. ${pen.toFixed(2)}`;
+  return `${symMoneda(row.moneda)} 0.00`;
 }
