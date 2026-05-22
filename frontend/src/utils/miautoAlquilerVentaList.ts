@@ -52,14 +52,13 @@ export function symMoneda(moneda?: string | null): string {
   return monedaCuotasLabel(moneda) === 'USD' ? '$' : 'S/.';
 }
 
-/** Total pagado en cuotas semanales con prefijo de moneda real (separa USD y PEN si hay mezcla). */
+/** Total pagado en cuotas semanales con prefijo de moneda dominante. */
 export function formatTotalPagadoList(row: AlquilerVentaListItem): string {
   const pen = row.total_pagado_pen ?? 0;
   const usd = row.total_pagado_usd ?? 0;
-  if (pen > 0 && usd > 0) {
-    return `S/. ${pen.toFixed(2)} · $ ${usd.toFixed(2)}`;
-  }
+  const moneda = row.moneda ?? 'PEN';
+  if (moneda === 'USD' && usd > 0) return `$ ${usd.toFixed(2)}`;
+  if (moneda === 'PEN' && pen > 0) return `S/. ${pen.toFixed(2)}`;
   if (usd > 0) return `$ ${usd.toFixed(2)}`;
-  if (pen > 0) return `S/. ${pen.toFixed(2)}`;
-  return `${symMoneda(row.moneda)} 0.00`;
+  return `S/. ${pen.toFixed(2)}`;
 }
