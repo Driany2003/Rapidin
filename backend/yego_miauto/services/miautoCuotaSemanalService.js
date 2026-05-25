@@ -633,13 +633,20 @@ function pctCobroFromRule(rule) {
 function dueDateYmdForMoraDesdeSemana(r, fechaInicioCobroSemanal) {
   const wsYmd = ymdFromDbDate(r.week_start_date);
   const fiYmd = ymdFromDbDate(fechaInicioCobroSemanal);
+  const storedDue = ymdFromDbDate(r.due_date);
+  /** Si hay mora_desde (carga tardía de data), usar esa fecha como inicio de mora. */
+  const moraDesde = ymdFromDbDate(r.mora_desde);
+  if (moraDesde && /^\d{4}-\d{2}-\d{2}$/.test(moraDesde)) {
+    return moraDesde;
+  }
   if (wsYmd && /^\d{4}-\d{2}-\d{2}$/.test(wsYmd) && fiYmd && /^\d{4}-\d{2}-\d{2}$/.test(fiYmd)) {
     const isPrimera = isSemanaDepositoMiAuto(wsYmd, fechaInicioCobroSemanal);
     const canon = computeDueDateForMiAutoCuota(wsYmd, fiYmd, !!isPrimera);
+    /** Si due_date fue postergado manualmente (posterior al canónico), usar el almacenado. */
+    if (storedDue && /^\d{4}-\d{2}-\d{2}$/.test(storedDue) && canon && /^\d{4}-\d{2}-\d{2}$/.test(String(canon)) && storedDue > canon) return storedDue;
     if (canon && /^\d{4}-\d{2}-\d{2}$/.test(String(canon))) return String(canon).trim().slice(0, 10);
   }
-  const d = ymdFromDbDate(r.due_date);
-  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  return storedDue && /^\d{4}-\d{2}-\d{2}$/.test(storedDue) ? storedDue : null;
 }
 
 /** Días civiles de retraso respecto al vencimiento (Lima). El día del vencimiento cuenta como 0; el interés empieza al día siguiente. */
@@ -875,9 +882,11 @@ function amountDueAndLateForOpenSinglePhase(
   const paid = round2(parseFloat(paidPhase) || 0);
 
   const dueForMora =
-    fechaInicioCobroSemanal != null
-      ? dueDateYmdForMoraDesdeSemana(r, fechaInicioCobroSemanal) || ymdFromDbDate(r.due_date) || r.due_date
-      : ymdFromDbDate(r.due_date) || r.due_date;
+    (ymdFromDbDate(r.mora_desde) || null) != null
+      ? ymdFromDbDate(r.mora_desde)
+      : fechaInicioCobroSemanal != null
+        ? dueDateYmdForMoraDesdeSemana(r, fechaInicioCobroSemanal) || ymdFromDbDate(r.due_date) || r.due_date
+        : ymdFromDbDate(r.due_date) || r.due_date;
 
   const cuotaNetaProg = round2(Math.max(0, amount_due_sched));
   const cuotaBruta = round2(Math.max(0, parseFloat(cuota_semanal) || 0));
@@ -1572,6 +1581,7 @@ export async function updateMoraDiaria(solicitudId = null, options = {}) {
             c.paid_amount, c.late_fee, c.status, c.moneda, c.pct_comision, c.cobro_saldo,
             c.partner_fees_raw, c.partner_fees_83,
             c.fecha_ultimo_abono, c.fecha_primer_comprobante, c.montos_fuente, c.cobro_desde_saldo_conductor,
+            c.mora_desde,
             s.cronograma_id, s.cronograma_vehiculo_id, s.fecha_inicio_cobro_semanal
      FROM module_miauto_cuota_semanal c
      INNER JOIN module_miauto_solicitud s ON s.id = c.solicitud_id
@@ -1612,6 +1622,7 @@ export async function updateMoraDiaria(solicitudId = null, options = {}) {
               c.num_viajes, c.bono_auto, c.cuota_semanal, c.partner_fees_raw, c.partner_fees_83,
               c.cobro_saldo, c.pct_comision, c.moneda, c.partner_fees_cascada_destino,
               c.fecha_ultimo_abono, c.fecha_primer_comprobante, c.montos_fuente, c.cobro_desde_saldo_conductor,
+              c.mora_desde,
               s.fecha_inicio_cobro_semanal
        FROM module_miauto_cuota_semanal c
        INNER JOIN module_miauto_solicitud s ON s.id = c.solicitud_id
@@ -1653,8 +1664,11 @@ export async function updateMoraDiaria(solicitudId = null, options = {}) {
       wsYmd && /^\d{4}-\d{2}-\d{2}$/.test(wsYmd)
         ? computeDueDateForMiAutoCuota(wsYmd, fiYmd, !!isPrimera)
         : null;
-    const patchDue = canonicalDueYmd && /^\d{4}-\d{2}-\d{2}$/.test(String(canonicalDueYmd));
-    const dueEffYmd = ymdFromDbDate(patchDue ? canonicalDueYmd : row.due_date);
+    const storedDueYmd = ymdFromDbDate(row.due_date);
+    const canonicalValid = canonicalDueYmd && /^\d{4}-\d{2}-\d{2}$/.test(String(canonicalDueYmd));
+    /** Solo parchea auto-calculado si el stored no está manualmente postergado (due_date > canonical). */
+    const patchDue = canonicalValid && (!storedDueYmd || canonicalDueYmd > storedDueYmd);
+    const dueEffYmd = storedDueYmd && (!canonicalValid || storedDueYmd > canonicalDueYmd) ? storedDueYmd : (canonicalValid ? canonicalDueYmd : null);
     const rowForDerived = patchDue ? { ...row, due_date: canonicalDueYmd } : row;
     const fiRow = row.fecha_inicio_cobro_semanal;
     const yangoSemanaCerrada = wsYmd ? isWeekYangoClosedForMiAutoCuotaMetrics(wsYmd, fiRow) : false;
@@ -2334,8 +2348,9 @@ function buildCuotaSemanalApiRow(r, cronograma, vehId, options = {}) {
   if (saldoPendienteApi <= 0.005) {
     moraInteresPeriodoApi = round2(0);
   }
+  const moraDesdeOrDue = ymdFromDbDate(r.mora_desde) || r.due_date;
   const lateFeeCalendarDays =
-    saldoPendienteApi <= 0.005 ? 0 : filaCerradaEfectiva ? 0 : calendarDaysLateLima(r.due_date);
+    saldoPendienteApi <= 0.005 ? 0 : filaCerradaEfectiva ? 0 : calendarDaysLateLima(moraDesdeOrDue);
   /** `cuota_final` = `pending_total` = saldo pendiente (no el monto pagado; evita confusión en UI). */
   const cuotaFinalApi = saldoPendienteApi;
   const pendingTotalApi = saldoPendienteApi;
@@ -2616,7 +2631,7 @@ async function fetchCuotasSemanalesPayload(solicitudId, options = {}) {
     `SELECT id, solicitud_id, week_start_date, due_date, num_viajes, bono_auto, cuota_semanal, amount_due, paid_amount, late_fee, status, moneda, pct_comision, cobro_saldo,
             partner_fees_raw, partner_fees_83, partner_fees_yango_raw, partner_fees_cascada_destino,
             fecha_ultimo_abono, fecha_primer_comprobante, montos_fuente, cobro_desde_saldo_conductor,
-            saldo_favor_conductor, created_at, updated_at
+            saldo_favor_conductor, mora_desde, created_at, updated_at
      FROM module_miauto_cuota_semanal
      WHERE solicitud_id = $1
      ORDER BY week_start_date ASC NULLS LAST, due_date ASC NULLS LAST, id ASC`,
