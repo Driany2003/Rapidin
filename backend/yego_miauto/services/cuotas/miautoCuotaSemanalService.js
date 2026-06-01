@@ -2009,7 +2009,9 @@ function buildCuotaSemanalApiRow(r, cronograma, vehId, options = {}) {
    * `mora_pendiente` / `late_fee`: saldo mora pendiente; si hay atraso, el interés corre sobre capital cuota según cronograma.
    * `cuota_final` / `pending_total`: mora pendiente + cuota pendiente (≈ obligación − pagado); comprobante en revisión puede congelar mora mostrada.
    */
-  const amountDueApi = round2(d.amount_due_sched);
+  const amountDueApi = rowMontosFuenteExcel(r) 
+    ? round2(parseFloat(r.amount_due) || 0)
+    : round2(d.amount_due_sched);
   const lateFeeColDb = round2(parseFloat(r.late_fee) || 0);
   const moraFullDer = round2(parseFloat(d.mora_full) || 0);
   const moraSchedDer = round2(parseFloat(d.mora_sched_periodo) || 0);
@@ -2152,6 +2154,8 @@ function buildCuotaSemanalApiRow(r, cronograma, vehId, options = {}) {
     partner_fees_yango_83: partnerFeesYango83Api,
     /** Imputación del pool PF+comisión a otras filas: `{ cuota_semanal_id, week_start_date, monto }[]`. */
     partner_fees_cascada_aplicado_a: partnerFeesCascadaApi,
+    /** Referencia de cobro de saldo aplicado a otras cuotas: [{ semana, week_start_date, monto }] */
+    cobro_saldo_referencia: parsePartnerFeesCascadaDestinoDb(r.cobro_saldo_referencia),
     /** Saldo a favor del conductor: excedente del cobro por ingresos que cubre la cuota completa. El operario debe pagárselo. */
     saldo_favor_conductor: round2(parseFloat(r.saldo_favor_conductor) || 0),
     cuota_neta: d.cuota_neta,
@@ -2341,7 +2345,7 @@ async function fetchCuotasSemanalesPayload(solicitudId, options = {}) {
     `SELECT id, solicitud_id, week_start_date, due_date, num_viajes, bono_auto, cuota_semanal, amount_due, paid_amount, late_fee, status, moneda, pct_comision, cobro_saldo,
             partner_fees_raw, partner_fees_83, partner_fees_yango_raw, partner_fees_cascada_destino,
             fecha_ultimo_abono, fecha_primer_comprobante, montos_fuente, cobro_desde_saldo_conductor,
-            saldo_favor_conductor, mora_desde, mora_extra, mora_extra_desde, created_at, updated_at
+            saldo_favor_conductor, mora_desde, mora_extra, mora_extra_desde, cobro_saldo_referencia, created_at, updated_at
      FROM module_miauto_cuota_semanal
      WHERE solicitud_id = $1
      ORDER BY week_start_date ASC NULLS LAST, due_date ASC NULLS LAST, id ASC`,

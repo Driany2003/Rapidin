@@ -68,6 +68,7 @@ interface CuotaSemanal {
   moneda?: string;
   cobro_saldo?: number;
   saldo_favor_conductor?: number;
+  cobro_saldo_referencia?: { semana?: number; week_start_date?: string; monto: number }[];
   /** Alícuota regla cronograma (si la API la envía). */
   cobro_saldo_regla?: number;
   cuota_neta?: number;
@@ -882,7 +883,7 @@ export default function YegoMiAutoRentSaleDetail() {
                   const filasCascadaCobro = miautoCascadaCobroIngresosFilasParaUi(cuotas, c);
                   // Cuota a pagar = cuota bruta - PF83 - cobro saldo (neta después de descuentos)
                   const cuotaBrutaVal = miautoNum(c.cuota_semanal);
-                  const pf83Val = miautoNum(c.partner_fees_yango_83 ?? c.partner_fees_83);
+                  const pf83Val = miautoNum(c.partner_fees_83);
                   const cobroSaldoVal = miautoNum(c.cobro_saldo);
                   const cuotaAPagarNeta = Math.max(0, cuotaBrutaVal - pf83Val - cobroSaldoVal);
                   // Mora base acumulada (estática de BD)
@@ -933,10 +934,7 @@ export default function YegoMiAutoRentSaleDetail() {
                     {/* Cobro por ingresos */}
                     <td className="py-2.5 px-1 align-top text-[11px] tabular-nums text-right text-green-700" title={titleCobroIngresos}>
                       <div className="flex min-w-0 flex-col items-end gap-1">
-                        <span className="shrink-0">{miautoFmtMonto(symCuota, tributoCobroIngresos)}</span>
-                        {saldoFavor > 0.005 && (
-                          <span className="text-[10px] font-medium text-blue-600">Saldo a favor: {miautoFmtMonto(symCuota, saldoFavor)}</span>
-                        )}
+                        <span className="font-medium">{miautoFmtMonto(symCuota, miautoNum(c.partner_fees_83))}</span>
                         {filasCascadaCobro.length > 0 ? (
                           <div className="w-full min-w-0 text-[10px] font-normal leading-snug text-gray-600">
                             {filasCascadaCobro.map((it, idx) => (
@@ -947,14 +945,28 @@ export default function YegoMiAutoRentSaleDetail() {
                                 ) : (<>{miautoFmtMonto(symCuota, it.monto)}</>)}
                               </span>
                             ))}
-                            <span className="block text-gray-500">Neto: {miautoFmtMonto(symCuota, miautoNum(tributoCobroIngresos) - filasCascadaCobro.reduce((s, it) => s + miautoNum(it.monto), 0))}</span>
                           </div>
                         ) : null}
+                        <span className="text-[10px] text-gray-500">83.33%: {miautoFmtMonto(symCuota, tributoCobroIngresos)}</span>
+                        {saldoFavor > 0.005 && (
+                          <span className="text-[10px] font-medium text-blue-600">Saldo a favor: {miautoFmtMonto(symCuota, saldoFavor)}</span>
+                        )}
                       </div>
                     </td>
                     {/* Cobro saldo */}
-                    <td className="py-2.5 px-1 align-middle text-[11px] tabular-nums text-right text-green-700">
-                      {miautoFmtMonto(symCuota, miautoCobroSaldoDisplay(c))}
+                    <td className="py-2.5 px-1 align-top text-[11px] tabular-nums text-right text-green-700">
+                      <div className="flex min-w-0 flex-col items-end gap-1">
+                        <span>{miautoFmtMonto(symCuota, miautoCobroSaldoDisplay(c))}</span>
+                        {c.cobro_saldo_referencia && c.cobro_saldo_referencia.length > 0 && (
+                          <div className="text-[10px] font-normal leading-snug text-gray-600">
+                            {c.cobro_saldo_referencia.map((ref, idx) => (
+                              <span key={idx} className="block tabular-nums">
+                                → Semana {ref.semana}: {miautoFmtMonto(symCuota, ref.monto)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     {/* Cuota a pagar */}
                     <td className="py-2.5 px-1 align-middle font-medium tabular-nums text-right text-gray-900 text-[12px]" title="Cuota neta después de descuentos (Recaudo + Cobro saldo)">

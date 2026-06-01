@@ -112,9 +112,7 @@ export function snapshotOrigenTrasCascada({ remainingPool, pctComision, cuotaSem
     ? round2(partnerFees83 / 0.8333)
     : 0;
 
-  const amountDue = remCubreCuota
-    ? 0
-    : round2(Math.max(0, obligacionSemana));
+  const amountDue = round2(Math.max(0, obligacionSemana - rem));
 
   return {
     partnerFeesRaw,
