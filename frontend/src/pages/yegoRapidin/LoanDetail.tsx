@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, User, Banknote, Calendar, AlertCircle, FileText, CheckCircle, Clock, XCircle, X, Download } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ArrowLeft, User, Banknote, Calendar, AlertCircle, FileText, CheckCircle, Clock, XCircle, X, Download, Upload, Trash2, ExternalLink } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
 import api from '../../services/api';
 import { formatDateUTC } from '../../utils/date';
@@ -65,6 +66,13 @@ const LoanDetail = () => {
   const [whatsAppMessage, setWhatsAppMessage] = useState('');
   const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
   const [downloadingConstancia, setDownloadingConstancia] = useState(false);
+  const [uploadingConstancia, setUploadingConstancia] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadedConstancias, setUploadedConstancias] = useState<any[]>([]);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [showUploadConfirm, setShowUploadConfirm] = useState(false);
+  const [docToDelete, setDocToDelete] = useState<{ id: string; name: string } | null>(null);
 
   const getBackToLoansState = (): (LoansSearchState & { fromLoanDetail: true }) | undefined => {
     const s = location.state as LoansSearchState | null;
@@ -87,8 +95,19 @@ const LoanDetail = () => {
     if (id) {
       fetchLoan();
       fetchSchedule();
+      fetchConstancias();
     }
   }, [id]);
+
+  const fetchConstancias = async () => {
+    try {
+      const response = await api.get(`/constancias/loan/${id}/documents`);
+      const data = response.data?.data ?? response.data ?? [];
+      setUploadedConstancias(Array.isArray(data) ? data : []);
+    } catch {
+      setUploadedConstancias([]);
+    }
+  };
 
   const fetchLoan = async () => {
     try {
@@ -153,6 +172,60 @@ const LoanDetail = () => {
       toast.error(err.response?.data?.message || 'Error al descargar la constancia');
     } finally {
       setDownloadingConstancia(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPendingFile(file);
+      setShowUploadConfirm(true);
+    }
+    e.target.value = '';
+  };
+
+  const confirmUpload = async () => {
+    if (!pendingFile) return;
+    setUploadingConstancia(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', pendingFile);
+      await api.post(`/constancias/loan/${id}/upload`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success('Constancia subida exitosamente');
+      fetchConstancias();
+      setShowUploadConfirm(false);
+      setPendingFile(null);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al subir la constancia');
+    } finally {
+      setUploadingConstancia(false);
+    }
+  };
+
+  const cancelUpload = () => {
+    if (uploadingConstancia) return;
+    setShowUploadConfirm(false);
+    setPendingFile(null);
+  };
+
+  const handleDeleteConstancia = (docId: string, docName: string) => {
+    setDocToDelete({ id: docId, name: docName });
+  };
+
+  const confirmDelete = async () => {
+    if (!docToDelete) return;
+    setDeletingDocId(docToDelete.id);
+    try {
+      await api.delete(`/constancias/documents/${docToDelete.id}`);
+      toast.success('Constancia eliminada');
+      fetchConstancias();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al eliminar la constancia');
+    } finally {
+      setDeletingDocId(null);
+      setDocToDelete(null);
     }
   };
 
@@ -298,15 +371,64 @@ const LoanDetail = () => {
               </p>
             </div>
           </div>
-          <button
-            onClick={handleDownloadConstancia}
-            disabled={downloadingConstancia}
-            className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-            title="Descargar Constancia"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">{downloadingConstancia ? 'Generando...' : 'Descargar Constancia'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDownloadConstancia}
+              disabled={downloadingConstancia}
+              className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              title="Descargar Constancia"
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">{downloadingConstancia ? 'Generando...' : 'Descargar Constancia'}</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.pdf"
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+            {uploadedConstancias.length === 0 ? (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingConstancia}
+                className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                title="Subir Constancia (PDF o imagen)"
+              >
+                <Upload className="w-4 h-4" />
+                <span className="hidden sm:inline">{uploadingConstancia ? 'Subiendo...' : 'Subir Constancia'}</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-1">
+                {uploadedConstancias.map((doc) => (
+                  <div key={doc.id} className="flex items-center gap-1 bg-white/20 rounded-lg">
+                    <a
+                      href={doc.file_path}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/30 transition-colors"
+                      title="Ver constancia"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span className="hidden sm:inline max-w-[120px] truncate">{doc.file_name}</span>
+                    </a>
+                    <button
+                      onClick={() => handleDeleteConstancia(doc.id, doc.file_name)}
+                      disabled={deletingDocId === doc.id}
+                      className="p-1.5 text-white/70 hover:text-white hover:bg-red-600/50 rounded-lg transition-colors disabled:opacity-50"
+                      title="Eliminar constancia"
+                    >
+                      {deletingDocId === doc.id ? (
+                        <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -607,6 +729,92 @@ const LoanDetail = () => {
           </div>
         </div>
       )}
+
+      {/* Modal Eliminar Constancia */}
+      {docToDelete && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" onClick={() => setDocToDelete(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-red-600 rounded-lg flex items-center justify-center">
+                  <Trash2 className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Eliminar constancia</h3>
+              </div>
+              <button type="button" onClick={() => setDocToDelete(null)} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-600">¿Estás seguro de eliminar esta constancia?</p>
+              <div className="bg-red-50 rounded-lg border border-red-200 p-3">
+                <p className="text-sm font-medium text-gray-900 truncate">{docToDelete.name}</p>
+              </div>
+            </div>
+            <div className="flex gap-3 px-5 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => setDocToDelete(null)}
+                className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg font-medium hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deletingDocId === docToDelete?.id}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {deletingDocId === docToDelete?.id ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
+      {/* Modal Confirmación de Subida */}
+      {showUploadConfirm && pendingFile && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" onClick={cancelUpload}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-red-600 rounded-lg flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Confirmar subida</h3>
+              </div>
+              <button type="button" onClick={cancelUpload} disabled={uploadingConstancia} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 disabled:opacity-30">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-600">¿Deseas subir la siguiente constancia?</p>
+              <div className="bg-gray-50 rounded-lg border border-gray-200 p-3">
+                <p className="text-sm font-medium text-gray-900 truncate">{pendingFile.name}</p>
+                <p className="text-xs text-gray-500 mt-1">{(pendingFile.size / 1024).toFixed(1)} KB</p>
+              </div>
+            </div>
+            <div className="flex gap-3 px-5 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                type="button"
+                onClick={cancelUpload}
+                disabled={uploadingConstancia}
+                className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmUpload}
+                disabled={uploadingConstancia}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {uploadingConstancia ? 'Subiendo...' : 'Subir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
     </div>
   );
 };

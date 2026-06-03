@@ -23,6 +23,8 @@ import {
   Users,
   Building2,
   Upload,
+  Trash2,
+  ExternalLink,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
@@ -199,6 +201,108 @@ const Loans = () => {
     }
   };
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingUploadLoanId, setPendingUploadLoanId] = useState<string | null>(null);
+  const [uploadingConstancia, setUploadingConstancia] = useState(false);
+  const [constanciasMap, setConstanciasMap] = useState<Record<string, any[]>>({});
+  const [deletingDocIds, setDeletingDocIds] = useState<Set<string>>(new Set());
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [showUploadConfirm, setShowUploadConfirm] = useState(false);
+  const [docToDelete, setDocToDelete] = useState<{ id: string; name: string; loanId: string } | null>(null);
+
+  const handleUploadConstanciaClick = (loanId: string) => {
+    setPendingUploadLoanId(loanId);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !pendingUploadLoanId) {
+      e.target.value = '';
+      return;
+    }
+    setPendingUploadFile(file);
+    setShowUploadConfirm(true);
+    e.target.value = '';
+  };
+
+  const confirmUpload = async () => {
+    if (!pendingUploadFile || !pendingUploadLoanId) {
+      setShowUploadConfirm(false);
+      setPendingUploadFile(null);
+      setPendingUploadLoanId(null);
+      return;
+    }
+    setUploadingConstancia(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', pendingUploadFile);
+      await api.post(`/constancias/loan/${pendingUploadLoanId}/upload`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success('Constancia subida exitosamente');
+      fetchConstancias();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al subir la constancia');
+    } finally {
+      setUploadingConstancia(false);
+      setShowUploadConfirm(false);
+      setPendingUploadLoanId(null);
+      setPendingUploadFile(null);
+    }
+  };
+
+  const cancelUpload = () => {
+    if (uploadingConstancia) return;
+    setShowUploadConfirm(false);
+    setPendingUploadFile(null);
+    setPendingUploadLoanId(null);
+  };
+
+  const fetchConstancias = async () => {
+    if (loans.length === 0) {
+      setConstanciasMap({});
+      return;
+    }
+    try {
+      const ids = loans.map((l) => l.id);
+      const res = await api.post('/constancias/loans/documents', { loan_ids: ids });
+      setConstanciasMap((res.data?.data ?? res.data) || {});
+    } catch {
+      setConstanciasMap({});
+    }
+  };
+
+  const handleDeleteConstancia = (docId: string, loanId: string, docName: string) => {
+    setDocToDelete({ id: docId, loanId, name: docName });
+  };
+
+  const confirmDelete = async () => {
+    if (!docToDelete) return;
+    setDeletingDocIds((prev) => new Set(prev).add(docToDelete.id));
+    try {
+      await api.delete(`/constancias/documents/${docToDelete.id}`);
+      toast.success('Constancia eliminada');
+      setConstanciasMap((prev) => {
+        const next = { ...prev };
+        if (next[docToDelete.loanId]) {
+          next[docToDelete.loanId] = next[docToDelete.loanId].filter((d: any) => d.id !== docToDelete.id);
+          if (next[docToDelete.loanId].length === 0) delete next[docToDelete.loanId];
+        }
+        return next;
+      });
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al eliminar la constancia');
+    } finally {
+      setDeletingDocIds((prev) => {
+        const next = new Set(prev);
+        next.delete(docToDelete.id);
+        return next;
+      });
+      setDocToDelete(null);
+    }
+  };
+
   useEffect(() => {
     if (prevSearchKeyRef.current !== searchKey) {
       prevSearchKeyRef.current = searchKey;
@@ -277,6 +381,10 @@ const Loans = () => {
     void fetchLoansPage(ac.signal);
     return () => ac.abort();
   }, [fetchLoansPage, navigate, location.pathname]);
+
+  useEffect(() => {
+    fetchConstancias();
+  }, [loans]);
 
   const fetchPersonalCredits = useCallback(async () => {
     setPersonalLoading(true);
@@ -586,6 +694,13 @@ const Loans = () => {
 
   return (
     <div className="space-y-4 lg:space-y-6">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".jpg,.jpeg,.png,.pdf"
+        className="hidden"
+        onChange={handleFileSelect}
+      />
       {/* Header */}
       <div className="bg-[#8B1A1A] rounded-lg p-4 lg:p-5">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
@@ -1108,6 +1223,46 @@ const Loans = () => {
                         >
                           <Download className="w-5 h-5" />
                         </button>
+                        {(() => {
+                          const docs = constanciasMap[loan.id];
+                          if (!docs || docs.length === 0) {
+                            return (
+                              <button
+                                onClick={() => handleUploadConstanciaClick(loan.id)}
+                                disabled={uploadingConstancia}
+                                className="p-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors border border-gray-200 disabled:opacity-50"
+                                title="Subir Constancia (PDF o imagen)"
+                              >
+                                <Upload className="w-5 h-5" />
+                              </button>
+                            );
+                          }
+                          return docs.map((doc: any) => (
+                            <div key={doc.id} className="flex items-center gap-0.5 border border-gray-200 rounded-lg">
+                              <a
+                                href={doc.file_path}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-l-lg transition-colors"
+                                title={`Ver ${doc.file_name}`}
+                              >
+                                <ExternalLink className="w-5 h-5" />
+                              </a>
+                              <button
+                                onClick={() => handleDeleteConstancia(doc.id, loan.id, doc.file_name)}
+                                disabled={deletingDocIds.has(doc.id)}
+                                className="p-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-r-lg transition-colors border-l border-gray-200 disabled:opacity-50"
+                                title="Eliminar constancia"
+                              >
+                                {deletingDocIds.has(doc.id) ? (
+                                  <span className="inline-block w-5 h-5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-5 h-5" />
+                                )}
+                              </button>
+                            </div>
+                          ));
+                        })()}
                       </div>
                     </td>
                   </tr>
@@ -1198,6 +1353,91 @@ const Loans = () => {
         </div>
       )}
       </>)}
+      {/* Modal Eliminar Constancia */}
+      {docToDelete && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" onClick={() => setDocToDelete(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-red-600 rounded-lg flex items-center justify-center">
+                  <Trash2 className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Eliminar constancia</h3>
+              </div>
+              <button type="button" onClick={() => setDocToDelete(null)} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-600">¿Estás seguro de eliminar esta constancia?</p>
+              <div className="bg-red-50 rounded-lg border border-red-200 p-3">
+                <p className="text-sm font-medium text-gray-900 truncate">{docToDelete.name}</p>
+              </div>
+            </div>
+            <div className="flex gap-3 px-5 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => setDocToDelete(null)}
+                className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg font-medium hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deletingDocIds.has(docToDelete.id)}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {deletingDocIds.has(docToDelete.id) ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
+      {/* Modal Confirmación de Subida */}
+      {showUploadConfirm && pendingUploadFile && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" onClick={cancelUpload}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-red-600 rounded-lg flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Confirmar subida</h3>
+              </div>
+              <button type="button" onClick={cancelUpload} disabled={uploadingConstancia} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 disabled:opacity-30">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-600">¿Deseas subir la siguiente constancia?</p>
+              <div className="bg-gray-50 rounded-lg border border-gray-200 p-3">
+                <p className="text-sm font-medium text-gray-900 truncate">{pendingUploadFile.name}</p>
+                <p className="text-xs text-gray-500 mt-1">{(pendingUploadFile.size / 1024).toFixed(1)} KB</p>
+              </div>
+            </div>
+            <div className="flex gap-3 px-5 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                type="button"
+                onClick={cancelUpload}
+                disabled={uploadingConstancia}
+                className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmUpload}
+                disabled={uploadingConstancia}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {uploadingConstancia ? 'Subiendo...' : 'Subir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
     </div>
   );
 };

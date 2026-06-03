@@ -79,6 +79,31 @@ export async function uploadFileToMedia(file) {
   return data.url;
 }
 
+// Subir constancia de préstamo (PDF/imagen) dentro del bucket existente, carpeta constancias/
+export async function uploadConstanciaToMedia(file) {
+  const form = new FormData();
+  form.append('bucket', MEDIA_BUCKET);
+  const prefixedName = `constancias/${file.originalname || 'constancia'}`;
+  const blob = new Blob([file.buffer], { type: file.mimetype || 'application/octet-stream' });
+  form.append('file', blob, prefixedName);
+
+  const response = await fetch(MEDIA_UPLOAD_URL, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Error al subir constancia a media: ${response.status} ${text}`);
+  }
+
+  const data = await response.json();
+  if (!data.url) {
+    throw new Error('La respuesta del servicio de media no incluyó la URL');
+  }
+  return data.url;
+}
+
 // Subir voucher de pago
 export const uploadVoucher = async (loanId, driverId, amount, paymentDate, file, observations, installmentIds) => {
   try {
