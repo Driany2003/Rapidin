@@ -170,6 +170,11 @@ export default function YegoMiAutoRentSaleDetail() {
   const [racha, setRacha] = useState<number | null>(null);
   const [bonoAplicado, setBonoAplicado] = useState<number>(0);
   const [tabCronograma, setTabCronograma] = useState<'semanales' | 'otros_gastos'>('semanales');
+  const [subTabCuota, setSubTabCuota] = useState<Record<string, 'comprobantes' | 'evidencias'>>({});
+  const [evidenciasFleet, setEvidenciasFleet] = useState<{ id: string; cuota_semanal_id: string; file_name: string; file_path: string; created_at: string }[]>([]);
+  const [subiendoEvidenciaCuotaId, setSubiendoEvidenciaCuotaId] = useState<string | null>(null);
+  const [eliminandoEvidenciaId, setEliminandoEvidenciaId] = useState<string | null>(null);
+  const evidenciaFleetFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [whatsAppMessage, setWhatsAppMessage] = useState('');
   const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
@@ -318,20 +323,23 @@ export default function YegoMiAutoRentSaleDetail() {
       else setLoading(true);
       setError('');
       const req = { signal, headers: MIAUTO_NO_CACHE_HEADERS };
-      const [resSol, resCuotas, resComp, resCompOg] = await Promise.all([
+      const [resSol, resCuotas, resComp, resCompOg, resEvidencias] = await Promise.all([
         api.get(`/miauto/solicitudes/${id}`, req),
         api.get(`/miauto/solicitudes/${id}/cuotas-semanales`, req),
         api.get(`/miauto/solicitudes/${id}/comprobantes-cuota-semanal`, req).catch(emptyListIfNotAbort),
         api.get(`/miauto/solicitudes/${id}/comprobantes-otros-gastos`, req).catch(emptyListIfNotAbort),
+        api.get(`/miauto/solicitudes/${id}/evidencias-fleet`, req).catch(emptyListIfNotAbort),
       ]);
       const sol = resSol.data?.data ?? resSol.data;
       const { cuotas: rawCuotas, racha: rachaNum, cuotasSemanalesBonificadas: bonoNum } = parseCuotasSemanalesPayload(resCuotas);
       const comp = resComp.data?.data ?? resComp.data ?? [];
       const compOg = resCompOg.data?.data ?? resCompOg.data ?? [];
+      const evFleet = resEvidencias.data?.data ?? resEvidencias.data ?? [];
       setSolicitud(sol || null);
       setCuotas(rawCuotas as CuotaSemanal[]);
       setComprobantesPagos(Array.isArray(comp) ? comp : []);
       setComprobantesOtrosGastos(Array.isArray(compOg) ? compOg : []);
+      setEvidenciasFleet(Array.isArray(evFleet) ? evFleet : []);
       setRacha(rachaNum);
       setBonoAplicado(bonoNum);
     } catch (e: any) {
@@ -345,6 +353,7 @@ export default function YegoMiAutoRentSaleDetail() {
         setCuotas([]);
         setComprobantesPagos([]);
         setComprobantesOtrosGastos([]);
+        setEvidenciasFleet([]);
         setRacha(null);
         setBonoAplicado(0);
       }
@@ -481,6 +490,45 @@ export default function YegoMiAutoRentSaleDetail() {
     setComprobantesOtrosAbierto((prev) => ({ ...prev, [otrosGastosId]: !prev[otrosGastosId] }));
   }, []);
 
+  const handleSubirEvidenciasFleetCuota = async (cuotaId: string) => {
+    if (!id) return;
+    const inputEl = evidenciaFleetFileRefs.current[cuotaId];
+    if (!inputEl?.files?.length) return;
+    setSubiendoEvidenciaCuotaId(cuotaId);
+    const formData = new FormData();
+    formData.append('cuota_semanal_id', cuotaId);
+    const files = inputEl.files;
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+    try {
+      const resp = await api.post(`/miauto/solicitudes/${id}/evidencias-fleet`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success(resp.data?.message || 'Evidencias subidas correctamente');
+      await fetchDetail(undefined, { refresh: true });
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al subir evidencias');
+    } finally {
+      setSubiendoEvidenciaCuotaId(null);
+      if (inputEl) inputEl.value = '';
+    }
+  };
+
+  const handleEliminarEvidenciaFleet = async (evId: string) => {
+    if (!id) return;
+    setEliminandoEvidenciaId(evId);
+    try {
+      await api.delete(`/miauto/solicitudes/${id}/evidencias-fleet/${evId}`);
+      setEvidenciasFleet((prev) => prev.filter((e) => e.id !== evId));
+      toast.success('Evidencia eliminada');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Error al eliminar');
+    } finally {
+      setEliminandoEvidenciaId(null);
+    }
+  };
+
   useEffect(() => {
     const ac = new AbortController();
     fetchDetail(ac.signal);
@@ -510,6 +558,17 @@ export default function YegoMiAutoRentSaleDetail() {
     }
     return by;
   }, [comprobantesPagos]);
+
+  const evidenciasByCuotaId = useMemo(() => {
+    const by: Record<string, typeof evidenciasFleet> = {};
+    for (const ev of evidenciasFleet) {
+      const cid = ev.cuota_semanal_id;
+      if (!cid) continue;
+      if (!by[cid]) by[cid] = [];
+      by[cid].push(ev);
+    }
+    return by;
+  }, [evidenciasFleet]);
 
   const kpiTotalesPorMoneda = useMemo(() => {
     let totalPagadoPEN = 0;
@@ -1016,25 +1075,54 @@ export default function YegoMiAutoRentSaleDetail() {
                     </td>
                   </tr>
                   <tr className="border-b border-gray-100">
-                      <td colSpan={11} className="p-0 align-top">
+                       <td colSpan={12} className="p-0 align-top">
                         <div
                           className="overflow-hidden transition-[max-height,opacity] duration-300 ease-out"
                           style={{ maxHeight: abierto ? 1800 : 0, opacity: abierto ? 1 : 0 }}
                         >
-                          <div className="px-4 py-3 bg-gray-50/80 border-t border-gray-200">
-                            <div className="flex items-center gap-2 mb-4">
-                              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#8B1A1A]/10">
-                                <FileText className="w-4 h-4 text-[#8B1A1A]" />
-                              </div>
-                              <div>
-                                <h4 className="text-sm font-semibold text-gray-900">Comprobantes — Semana {numeroSemana}</h4>
-                                <p className="text-xs text-gray-500">
-                                  {c.due_date ? formatDate(c.due_date, 'es-ES') : c.week_start_date ? formatDate(c.week_start_date, 'es-ES') : '—'}
-                                </p>
-                              </div>
-                            </div>
+                           <div className="px-4 py-3 bg-gray-50/80 border-t border-gray-200">
+                             <div className="flex items-center gap-2 mb-3">
+                               <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#8B1A1A]/10">
+                                 <FileText className="w-4 h-4 text-[#8B1A1A]" />
+                               </div>
+                               <div>
+                                 <h4 className="text-sm font-semibold text-gray-900">Semana {numeroSemana}</h4>
+                                 <p className="text-xs text-gray-500">
+                                   {c.due_date ? formatDate(c.due_date, 'es-ES') : c.week_start_date ? formatDate(c.week_start_date, 'es-ES') : '—'}
+                                 </p>
+                               </div>
+                             </div>
 
-                            <div className="mb-4">
+                             {/* Sub-pestañas dentro de la cuota */}
+                             <div className="flex border-b border-gray-200 mb-3 gap-0.5" role="tablist" aria-label={`Detalle semana ${numeroSemana}`}>
+                               <button
+                                 type="button" role="tab"
+                                 aria-selected={(subTabCuota[c.id] ?? 'comprobantes') === 'comprobantes'}
+                                 onClick={() => setSubTabCuota((prev) => ({ ...prev, [c.id]: 'comprobantes' }))}
+                                 className={`px-3 py-2 text-xs font-semibold uppercase tracking-wide border-b-2 -mb-px transition-colors ${
+                                   (subTabCuota[c.id] ?? 'comprobantes') === 'comprobantes'
+                                     ? 'border-[#8B1A1A] text-[#8B1A1A]'
+                                     : 'border-transparent text-gray-500 hover:text-gray-800'
+                                 }`}
+                               >
+                                 Comprobantes
+                               </button>
+                               <button
+                                 type="button" role="tab"
+                                 aria-selected={(subTabCuota[c.id] ?? 'comprobantes') === 'evidencias'}
+                                 onClick={() => setSubTabCuota((prev) => ({ ...prev, [c.id]: 'evidencias' }))}
+                                 className={`px-3 py-2 text-xs font-semibold uppercase tracking-wide border-b-2 -mb-px transition-colors ${
+                                   (subTabCuota[c.id] ?? 'comprobantes') === 'evidencias'
+                                     ? 'border-[#8B1A1A] text-[#8B1A1A]'
+                                     : 'border-transparent text-gray-500 hover:text-gray-800'
+                                 }`}
+                               >
+                                 Evidencias Fleet
+                               </button>
+                             </div>
+
+                             {(subTabCuota[c.id] ?? 'comprobantes') === 'comprobantes' && (
+                             <>
                               <h5 className="text-xs font-semibold text-gray-900 mb-2">Comprobantes del conductor</h5>
                               {compsConductor.length > 0 ? (
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -1153,7 +1241,6 @@ export default function YegoMiAutoRentSaleDetail() {
                               ) : (
                                 <p className="text-xs text-gray-500">No hay comprobantes enviados por el conductor para esta semana.</p>
                               )}
-                            </div>
 
                             <div className="mb-4 rounded-lg border border-gray-200 bg-white px-3 py-3 shadow-sm">
                                 <h5 className="text-xs font-semibold text-gray-900">Comprobante de pago (Yego)</h5>
@@ -1467,6 +1554,104 @@ export default function YegoMiAutoRentSaleDetail() {
                                 )}
                               />
                             )}
+                            </>
+                            )}
+
+                            {(subTabCuota[c.id] ?? 'comprobantes') === 'evidencias' && (
+                            <>
+                            {/* --- Evidencias de cobro Fleet --- */}
+                            <div className="">
+                              <div className="flex items-center gap-2 mb-3">
+                                <Upload className="w-4 h-4 text-[#8B1A1A]" />
+                                <h5 className="text-xs font-semibold text-gray-900">Evidencias cobro Fleet</h5>
+                              </div>
+
+                              {(() => {
+                                const evsCuota = evidenciasByCuotaId[c.id] ?? [];
+                                const subiendoEstaCuota = subiendoEvidenciaCuotaId === c.id;
+                                return (
+                                  <>
+                                    {evsCuota.length > 0 && (
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mb-3">
+                                        {evsCuota.map((ev) => {
+                                          const url = ev.file_path?.startsWith('http') ? ev.file_path : getMiautoAdjuntoUrl(ev.file_path);
+                                          const isImage = ev.file_path && !/\.pdf$/i.test(ev.file_name || '') && /\.(jpe?g|png|gif|webp)$/i.test(ev.file_name || '');
+                                          const openPreview = () => url && setComprobantePreview({ url, fileName: ev.file_name, isImage: !!isImage });
+                                          return (
+                                            <div key={ev.id} className="rounded-lg border border-gray-200 bg-white p-2 flex items-center gap-2 group/ev">
+                                              <button type="button" onClick={openPreview} className="flex-shrink-0 w-10 h-10 rounded-md bg-gray-100 flex items-center justify-center overflow-hidden hover:ring-2 hover:ring-[#8B1A1A]/30">
+                                                {isImage ? (
+                                                  <img src={url} alt="" className="w-full h-full object-cover" />
+                                                ) : (
+                                                  <FileText className="w-5 h-5 text-gray-500" />
+                                                )}
+                                              </button>
+                                              <div className="min-w-0 flex-1">
+                                                <p className="text-xs font-medium text-gray-700 truncate" title={ev.file_name}>{ev.file_name}</p>
+                                                {ev.created_at && (
+                                                  <p className="text-[10px] text-gray-400">{formatDateTime(ev.created_at, 'es-ES')}</p>
+                                                )}
+                                              </div>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleEliminarEvidenciaFleet(ev.id)}
+                                                disabled={eliminandoEvidenciaId === ev.id}
+                                                className="flex-shrink-0 p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover/ev:opacity-100 transition-opacity disabled:opacity-50"
+                                                title="Eliminar evidencia"
+                                              >
+                                                {eliminandoEvidenciaId === ev.id ? (
+                                                  <div className="animate-spin rounded-full h-3 w-3 border-2 border-red-600 border-t-transparent" />
+                                                ) : (
+                                                  <Trash2 className="w-3.5 h-3.5" />
+                                                )}
+                                              </button>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        ref={(el) => { evidenciaFleetFileRefs.current[c.id] = el; }}
+                                        type="file"
+                                        accept="image/jpeg,image/png,application/pdf"
+                                        multiple
+                                        onChange={() => handleSubirEvidenciasFleetCuota(c.id)}
+                                        className="hidden"
+                                        id={`evidencia-fleet-${c.id}`}
+                                      />
+                                      <label
+                                        htmlFor={`evidencia-fleet-${c.id}`}
+                                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+                                          subiendoEstaCuota
+                                            ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                            : 'bg-[#8B1A1A]/10 text-[#8B1A1A] hover:bg-[#8B1A1A]/20 border border-[#8B1A1A]/30'
+                                        }`}
+                                      >
+                                        {subiendoEstaCuota ? (
+                                          <>
+                                            <div className="animate-spin rounded-full h-3 w-3 border-2 border-[#8B1A1A] border-t-transparent" />
+                                            Subiendo…
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Upload className="w-3 h-3" />
+                                            Subir evidencia
+                                          </>
+                                        )}
+                                      </label>
+                                      {evsCuota.length === 0 && (
+                                        <span className="text-xs text-gray-400">Sin evidencias</span>
+                                      )}
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                            </>
+                            )}
+
                           </div>
                         </div>
                       </td>
@@ -1696,6 +1881,7 @@ export default function YegoMiAutoRentSaleDetail() {
             )}
         </>
         )}
+
         {refreshingDetail && (
           <div
             className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[1px]"

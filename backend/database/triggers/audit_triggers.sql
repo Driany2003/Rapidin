@@ -61,7 +61,8 @@ BEGIN
         'module_miauto_comprobante_pago',
         'module_miauto_comprobante_cuota_semanal',
         'module_miauto_otros_gastos',
-        'module_miauto_adjunto'
+        'module_miauto_adjunto',
+        'module_miauto_evidencia_cobro_fleet'
     ] LOOP
         EXECUTE format('
             DROP TRIGGER IF EXISTS trg_audit_%I ON %I;

@@ -5,6 +5,7 @@ import cronogramasRouter from './miauto/cronogramas.js';
 import cuotasRouter from './miauto/cuotas.js';
 import comprobantesRouter from './miauto/comprobantes.js';
 import otrosRouter from './miauto/otros.js';
+import evidenciasRouter from './miauto/evidencias.js';
 
 const router = Router();
 router.use(authenticate);
@@ -21,5 +22,6 @@ router.use(cronogramasRouter);
 router.use(cuotasRouter);
 router.use(comprobantesRouter);
 router.use(otrosRouter);
+router.use(evidenciasRouter);
 
 export default router;
