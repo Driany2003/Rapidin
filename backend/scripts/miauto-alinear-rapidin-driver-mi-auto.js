@@ -1,13 +1,13 @@
 /**
- * Solo actualiza `module_miauto_solicitud.rapidin_driver_id`.
- * Busca en `drivers` (Yego Mi Auto park, work_status=working) el `driver_id` Yango y lo guarda como UUID en `rapidin_driver_id`.
+ * Solo actualiza `module_miauto_solicitud.driver_id_fleet`.
+ * Busca en `drivers` (Yego Mi Auto park, work_status=working) el `driver_id` Yango y lo guarda como UUID en `driver_id_fleet`.
  *
  * Uso (una solicitud / DNI — igual que antes):
  *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js <dni>
  *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js <solicitud_uuid>
  *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js <dni> <solicitud_uuid>
  *
- * Uso (lote — todas las solicitudes sin rapidin_driver_id):
+ * Uso (lote — todas las solicitudes sin driver_id_fleet):
  *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js --sin-rapidin --dry-run
  *   node scripts/miauto-alinear-rapidin-driver-mi-auto.js --sin-rapidin
  *
@@ -103,7 +103,7 @@ async function applyRapidinDriverToSolicitudId(solicitudId, uuidText, dryRun) {
   if (dryRun) return true;
   const upd = await query(
     `UPDATE module_miauto_solicitud
-     SET rapidin_driver_id = $1::uuid, updated_at = CURRENT_TIMESTAMP
+     SET driver_id_fleet = $1::uuid, updated_at = CURRENT_TIMESTAMP
      WHERE id = $2::uuid
      RETURNING id`,
     [uuidText, solicitudId]
@@ -115,9 +115,9 @@ async function mainBatch() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes('--dry-run');
   const res = await query(
-    `SELECT id, country, dni, phone, rapidin_driver_id
+    `SELECT id, country, dni, phone, driver_id_fleet
      FROM module_miauto_solicitud
-     WHERE rapidin_driver_id IS NULL
+     WHERE driver_id_fleet IS NULL
        AND (
          (phone IS NOT NULL AND TRIM(phone) <> '')
          OR (REGEXP_REPLACE(COALESCE(dni, ''), '[^0-9]', '', 'g') <> '' AND LENGTH(REGEXP_REPLACE(COALESCE(dni, ''), '[^0-9]', '', 'g')) >= 4)
@@ -202,7 +202,7 @@ async function mainSingle() {
     alinearSoloPorTelefonoSolicitud = true;
     solicitudIdFilter = String(arg1).trim();
     const one = await query(
-      `SELECT id, country, dni, phone, rapidin_driver_id
+      `SELECT id, country, dni, phone, driver_id_fleet
        FROM module_miauto_solicitud WHERE id = $1::uuid LIMIT 1`,
       [solicitudIdFilter]
     );
@@ -228,7 +228,7 @@ async function mainSingle() {
   let solicitudes;
   if (solicitudIdFilter && !isUuidArg(arg1)) {
     const solRes = await query(
-      `SELECT id, country, dni, phone, rapidin_driver_id
+      `SELECT id, country, dni, phone, driver_id_fleet
        FROM module_miauto_solicitud
        WHERE id = $1::uuid
          AND REGEXP_REPLACE(COALESCE(dni, ''), '[^0-9]', '', 'g') = $2`,
@@ -241,14 +241,14 @@ async function mainSingle() {
     }
   } else if (solicitudIdFilter && isUuidArg(arg1)) {
     const solRes = await query(
-      `SELECT id, country, dni, phone, rapidin_driver_id
+      `SELECT id, country, dni, phone, driver_id_fleet
        FROM module_miauto_solicitud WHERE id = $1::uuid`,
       [solicitudIdFilter]
     );
     solicitudes = solRes.rows || [];
   } else {
     const solRes = await query(
-      `SELECT id, country, dni, phone, rapidin_driver_id
+      `SELECT id, country, dni, phone, driver_id_fleet
        FROM module_miauto_solicitud
        WHERE REGEXP_REPLACE(COALESCE(dni, ''), '[^0-9]', '', 'g') = $1
        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST`,
@@ -292,7 +292,7 @@ async function mainSingle() {
   for (const sid of idsToUpdate) {
     const updSol = await query(
       `UPDATE module_miauto_solicitud
-       SET rapidin_driver_id = $1::uuid, updated_at = CURRENT_TIMESTAMP
+       SET driver_id_fleet = $1::uuid, updated_at = CURRENT_TIMESTAMP
        WHERE id = $2::uuid
        RETURNING id`,
       [uuidText, sid]

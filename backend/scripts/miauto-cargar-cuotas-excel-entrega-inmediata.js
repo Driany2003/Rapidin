@@ -250,7 +250,7 @@ async function findSolicitud(placaNorm, dniDigits, phoneDigits) {
     const r2 = await query(
       `SELECT s.id, s.cronograma_id, s.cronograma_vehiculo_id, s.fecha_inicio_cobro_semanal, s.placa_asignada
        FROM module_miauto_solicitud s
-       LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
+       LEFT JOIN module_rapidin_drivers rd ON rd.id = s.driver_id_fleet
        WHERE REGEXP_REPLACE(COALESCE(TRIM(s.dni),''), '[^0-9]', '', 'g') = $1
           OR REGEXP_REPLACE(COALESCE(TRIM(rd.dni),''), '[^0-9]', '', 'g') = $1
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
@@ -370,6 +370,30 @@ async function main() {
   if (!ws) {
     console.error('No hay hoja ' + SHEET_NAME);
     process.exit(1);
+  }
+
+  const cuotasBatch = [];
+  const BATCH_SIZE = 200;
+
+  async function flushBatch() {
+    if (cuotasBatch.length === 0) return;
+    const deduped = new Map();
+    for (const c of cuotasBatch) {
+      const key = c.solicitud_id + '|' + c.week_start_date;
+      if (!deduped.has(key)) deduped.set(key, c);
+    }
+    const dedupedArr = [...deduped.values()];
+    const vals = [];
+    const params = [];
+    let n = 1;
+    for (const c of dedupedArr) {
+      vals.push(`($${n}::uuid, $${n+1}::date, $${n+2}::date, $${n+3}, $${n+4}, $${n+5}, $${n+6}, $${n+7}, $${n+8}, $${n+9}, $${n+10}, $${n+11}, $${n+12}, $${n+13}, $${n+14}, 'excel')`);
+      params.push(c.solicitud_id, c.week_start_date, c.due_date, c.num_viajes, c.partner_fees_raw, c.partner_fees_83, c.bono_auto, c.cuota_semanal, c.amount_due, c.paid_amount, c.status, c.moneda, c.pct_comision, c.cobro_saldo, c.late_fee);
+      n += 15;
+    }
+    await query(`INSERT INTO module_miauto_cuota_semanal (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, bono_auto, cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, late_fee, montos_fuente) VALUES ${vals.join(', ')} ON CONFLICT (solicitud_id, week_start_date) DO NOTHING`, params);
+    stats.db_inserts += cuotasBatch.length;
+    cuotasBatch.length = 0;
   }
 
   const ref = ws['!ref'];
@@ -514,65 +538,28 @@ async function main() {
 
       if (dryRun) continue;
 
-      try {
-        await query(
-          `INSERT INTO module_miauto_cuota_semanal
-            (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, bono_auto,
-             cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, late_fee, montos_fuente)
-           VALUES ($1::uuid, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'excel')`,
-          [
-            sol.id,
-            payload.week_start_date,
-            payload.due_date,
-            payload.num_viajes,
-            payload.partner_fees_raw,
-            payload.partner_fees_83,
-            payload.bono_auto,
-            payload.cuota_semanal,
-            payload.amount_due,
-            payload.paid_amount,
-            payload.status,
-            payload.moneda,
-            payload.pct_comision,
-            payload.cobro_saldo,
-            payload.late_fee,
-          ]
-        );
-      } catch (e) {
-        if (e && e.code === '23505') {
-          const fallbackWs = ymd; // usar la fecha real del Excel como week_start
-          console.warn(`[DUP-WS] Fila ${row} bloque ${k+1}: week_start ${weekStart} ya existe. Reintentando con fecha real del Excel: ${fallbackWs}`);
-          await query(
-            `INSERT INTO module_miauto_cuota_semanal
-              (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, bono_auto,
-               cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, late_fee, montos_fuente)
-             VALUES ($1::uuid, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'excel')`,
-            [
-              sol.id,
-              fallbackWs,
-              payload.due_date,
-              payload.num_viajes,
-              payload.partner_fees_raw,
-              payload.partner_fees_83,
-              payload.bono_auto,
-              payload.cuota_semanal,
-              payload.amount_due,
-              payload.paid_amount,
-              payload.status,
-              payload.moneda,
-              payload.pct_comision,
-              payload.cobro_saldo,
-              payload.late_fee,
-            ]
-          );
-        } else {
-          throw e;
-        }
-      }
-      stats.db_inserts++;
-      touchedSolicitudes.add(String(sol.id));
+      cuotasBatch.push({
+        solicitud_id: sol.id,
+        week_start_date: payload.week_start_date,
+        due_date: payload.due_date,
+        num_viajes: payload.num_viajes,
+        partner_fees_raw: payload.partner_fees_raw,
+        partner_fees_83: payload.partner_fees_83,
+        bono_auto: payload.bono_auto,
+        cuota_semanal: payload.cuota_semanal,
+        amount_due: payload.amount_due,
+        paid_amount: payload.paid_amount,
+        status: payload.status,
+        moneda: payload.moneda,
+        pct_comision: payload.pct_comision,
+        cobro_saldo: payload.cobro_saldo,
+        late_fee: payload.late_fee,
+      });
+      if (cuotasBatch.length >= BATCH_SIZE) await flushBatch();
     }
   }
+  // Flush remaining cuotas
+  if (!dryRun) await flushBatch();
 
   if (!dryRun) {
     for (const sid of touchedSolicitudes) {

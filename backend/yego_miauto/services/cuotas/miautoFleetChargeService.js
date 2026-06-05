@@ -32,16 +32,17 @@ const PARTNER_FEES_PCT = 0.8333;
 
 // --- Helpers SQL compartidos ------------------------------------------------
 
-/** Columnas COALESCE que dependen del LATERAL JOIN `fl` y `module_rapidin_drivers rd`. */
+/** Columnas del LATERAL JOIN `fl` (Yango drivers) sin dependencia de module_rapidin_drivers. */
 function sqlYangoDriverCoalesceColumns() {
-  return `COALESCE(NULLIF(TRIM(COALESCE(fl.driver_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.external_driver_id::text, '')), '')) AS external_driver_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.park_id::text, '')), ''), NULLIF(TRIM(COALESCE(rd.park_id::text, '')), ''), '${MIAUTO_PARK_ID}') AS park_id,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.first_name::text, '')), ''), rd.first_name) AS first_name,
-            COALESCE(NULLIF(TRIM(COALESCE(fl.last_name::text, '')), ''), rd.last_name) AS last_name,
-            fl.work_status AS yango_work_status`;
+  return `fl.driver_id AS external_driver_id,
+            COALESCE(NULLIF(TRIM(COALESCE(fl.park_id::text, '')), ''), '${MIAUTO_PARK_ID}') AS park_id,
+            fl.first_name, fl.last_name,
+            fl.work_status AS yango_work_status,
+            fw.first_name AS working_driver_first_name,
+            fw.last_name AS working_driver_last_name`;
 }
 
-/** LATERAL JOIN a `drivers` (Yango) buscando por PLACA primero, luego driver_id → DNI → teléfono. */
+/** LATERAL JOIN a `drivers` (Yango): prioridad driver_id_fleet → DNI → placa → teléfono. */
 function sqlYangoDriverLateralJoin(parkParamNumber) {
   const p = parkParamNumber;
   return `LEFT JOIN LATERAL (
@@ -49,22 +50,45 @@ function sqlYangoDriverLateralJoin(parkParamNumber) {
         FROM drivers d
         WHERE TRIM(COALESCE(d.park_id::text, '')) = $${p}
           AND (
-            UPPER(REGEXP_REPLACE(TRIM(COALESCE(d.car_normalized_number, d.car_number, '')), '\\s', '', 'g')) =
-                UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g'))
-            OR LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g'))
+            d.driver_id = s.driver_id_fleet
             OR (
               REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
-                  REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g')
-              AND REGEXP_REPLACE(COALESCE(TRIM(COALESCE(rd.dni, s.dni)), ''), '[^0-9]', '', 'g') <> ''
+                  REGEXP_REPLACE(COALESCE(TRIM(s.dni), ''), '[^0-9]', '', 'g')
+              AND REGEXP_REPLACE(COALESCE(TRIM(s.dni), ''), '[^0-9]', '', 'g') <> ''
+            )
+            OR UPPER(REGEXP_REPLACE(TRIM(COALESCE(d.car_normalized_number, d.car_number, '')), '\\s', '', 'g')) =
+                UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g'))
+            OR (
+              REGEXP_REPLACE(COALESCE(TRIM(d.phone), ''), '[^0-9]', '', 'g') =
+                  REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g')
+              AND REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g') <> ''
+              AND CHAR_LENGTH(REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g')) >= 9
             )
           )
         ORDER BY
-          CASE WHEN d.work_status = 'working' THEN 0
-               WHEN d.work_status = 'fired' THEN 1
-               ELSE 2 END,
+          CASE WHEN d.driver_id = s.driver_id_fleet AND s.driver_id_fleet IS NOT NULL AND TRIM(s.driver_id_fleet) <> '' THEN 0
+               WHEN REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
+                    REGEXP_REPLACE(COALESCE(TRIM(s.dni), ''), '[^0-9]', '', 'g')
+                    AND REGEXP_REPLACE(COALESCE(TRIM(s.dni), ''), '[^0-9]', '', 'g') <> '' THEN 1
+               WHEN UPPER(REGEXP_REPLACE(TRIM(COALESCE(d.car_normalized_number, d.car_number, '')), '\\s', '', 'g')) =
+                    UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g'))
+                    AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g')) <> '' THEN 2
+               WHEN REGEXP_REPLACE(COALESCE(TRIM(d.phone), ''), '[^0-9]', '', 'g') = REGEXP_REPLACE(COALESCE(TRIM(s.phone), ''), '[^0-9]', '', 'g') THEN 3
+               ELSE 4 END,
+          CASE WHEN d.work_status = 'working' THEN 0 ELSE 1 END,
           d.driver_id::text
         LIMIT 1
-      ) fl ON true`;
+      ) fl ON true
+      LEFT JOIN LATERAL (
+        SELECT d2.first_name, d2.last_name
+        FROM drivers d2
+        WHERE TRIM(COALESCE(d2.park_id::text, '')) = $${p}
+          AND d2.work_status = 'working'
+          AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(d2.car_normalized_number, d2.car_number, '')), '\\s', '', 'g')) =
+              UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g'))
+          AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(s.placa_asignada, '')), '\\s', '', 'g')) <> ''
+        LIMIT 1
+      ) fw ON true`;
 }
 
 // --- Helpers fleet ---------------------------------------------------------
@@ -230,13 +254,11 @@ export async function getCuotasToCharge() {
     `SELECT c.id, c.solicitud_id, c.week_start_date, c.due_date, c.amount_due, c.paid_amount, c.late_fee, c.status,
             c.cuota_semanal, c.bono_auto, c.cobro_saldo, c.pct_comision, c.partner_fees_raw, c.moneda,
             c.fecha_ultimo_abono, c.fecha_primer_comprobante,
-            s.cronograma_id, s.fecha_inicio_cobro_semanal, s.placa_asignada,
-            rd.id AS driver_id,
+            s.cronograma_id, s.fecha_inicio_cobro_semanal, s.placa_asignada, s.license_number,
             ${sqlYangoDriverCoalesceColumns()},
             s.country
      FROM module_miauto_cuota_semanal c
      INNER JOIN module_miauto_solicitud s ON s.id = c.solicitud_id
-     LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
      ${sqlYangoDriverLateralJoin(1)}
      WHERE c.status IN ('pending', 'overdue', 'partial')
      ORDER BY c.solicitud_id, c.week_start_date ASC NULLS LAST, c.due_date ASC NULLS LAST, c.id ASC`,
@@ -258,20 +280,16 @@ export async function getCuotasToCharge() {
   return { cuotas: rows, solicitudPendingMap };
 }
 
-// --- getCuotasToChargeForSolicitud -----------------------------------------
-
 export async function getCuotasToChargeForSolicitud(solicitudId) {
   const res = await query(
     `SELECT c.id, c.solicitud_id, c.week_start_date, c.due_date, c.amount_due, c.paid_amount, c.late_fee, c.status,
             c.cuota_semanal, c.bono_auto, c.cobro_saldo, c.pct_comision, c.partner_fees_raw, c.moneda,
             c.fecha_ultimo_abono, c.fecha_primer_comprobante,
-            s.cronograma_id, s.fecha_inicio_cobro_semanal, s.placa_asignada,
-            rd.id AS driver_id,
+            s.cronograma_id, s.fecha_inicio_cobro_semanal, s.placa_asignada, s.license_number,
             ${sqlYangoDriverCoalesceColumns()},
             s.country
      FROM module_miauto_cuota_semanal c
      INNER JOIN module_miauto_solicitud s ON s.id = c.solicitud_id
-     LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
      ${sqlYangoDriverLateralJoin(2)}
      WHERE c.solicitud_id = $1::uuid
        AND c.status IN ('pending', 'overdue', 'partial')
@@ -354,15 +372,15 @@ export async function processCobroCuota(
            WHERE TRIM(COALESCE(d.park_id::text, '')) = $2
              AND d.work_status = 'working'
              AND (
-               LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g'))
+                LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.driver_id_fleet::text, '')), '-', '', 'g'))
                OR (
                  REGEXP_REPLACE(COALESCE(TRIM(d.document_number), ''), '[^0-9]', '', 'g') =
                      REGEXP_REPLACE(COALESCE(TRIM(s.dni), ''), '[^0-9]', '', 'g')
                  AND REGEXP_REPLACE(COALESCE(TRIM(s.dni), ''), '[^0-9]', '', 'g') <> ''
                )
              )
-           ORDER BY CASE WHEN LOWER(REGEXP_REPLACE(TRIM(COALESCE(d.driver_id::text, '')), '-', '', 'g')) = LOWER(REGEXP_REPLACE(TRIM(COALESCE(s.rapidin_driver_id::text, '')), '-', '', 'g')) THEN 0 ELSE 1 END
-           LIMIT 1
+            ORDER BY CASE WHEN d.driver_id = s.driver_id_fleet AND s.driver_id_fleet IS NOT NULL AND TRIM(s.driver_id_fleet) <> '' THEN 0 ELSE 1 END
+            LIMIT 1
          ) fl ON true
          WHERE s.id = $1::uuid`,
         [cuotaRow.solicitud_id, MIAUTO_PARK_ID]

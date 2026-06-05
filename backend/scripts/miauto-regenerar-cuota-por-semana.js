@@ -32,7 +32,7 @@ async function main() {
       `SELECT REGEXP_REPLACE(COALESCE(TRIM(s.dni), ''), '[^0-9]', '', 'g') AS dni_sol,
               REGEXP_REPLACE(COALESCE(TRIM(rd.dni), ''), '[^0-9]', '', 'g') AS dni_rd
        FROM module_miauto_solicitud s
-       LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
+       LEFT JOIN module_rapidin_drivers rd ON rd.id = s.driver_id_fleet
        WHERE s.id = $1::uuid`,
       [sid]
     );

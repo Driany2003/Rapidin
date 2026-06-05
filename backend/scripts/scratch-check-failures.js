@@ -42,7 +42,7 @@ async function main() {
                cs.amount_due, cs.late_fee, cs.paid_amount, cs.moneda
         FROM module_miauto_cuota_semanal cs
         JOIN module_miauto_solicitud s ON s.id = cs.solicitud_id
-        LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
+        LEFT JOIN module_rapidin_drivers rd ON rd.id = s.driver_id_fleet
         WHERE cs.id = ANY($1::uuid[])
     `, [ids]);
     

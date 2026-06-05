@@ -68,3 +68,16 @@ export async function getDriverInfoByPhones(parkId, phones) {
   }
   return { names, licenses };
 }
+
+/**
+ * Resuelve el driver_id de Yango Fleet consultando la API de sugerencias.
+ * @param {string} dni - DNI del conductor
+ * @returns {Promise<string | null>} contractor_id de Yango
+ */
+export async function resolveFleetDriverIdFromDni(dni) {
+  const clean = (dni || '').replace(/\D/g, '');
+  if (!clean) return null;
+  const { searchFleetContractor } = await import('../../../services/yangoService.js');
+  const result = await searchFleetContractor(clean);
+  return result?.success ? result.contractor_id : null;
+}

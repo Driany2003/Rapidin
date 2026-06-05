@@ -174,7 +174,7 @@ async function findSolicitud(placaNorm, dniDigits, phoneDigits) {
               REGEXP_REPLACE(COALESCE(TRIM(s.phone),''), '[^0-9]', '', 'g') AS sol_phone,
               s.placa_asignada
        FROM module_miauto_solicitud s
-       LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
+        LEFT JOIN module_rapidin_drivers rd ON rd.id::text = s.driver_id_fleet
        WHERE REGEXP_REPLACE(COALESCE(TRIM(s.dni),''), '[^0-9]', '', 'g') = $1
           OR REGEXP_REPLACE(COALESCE(TRIM(rd.dni),''), '[^0-9]', '', 'g') = $1
        ORDER BY s.created_at DESC NULLS LAST LIMIT 1`,
@@ -439,8 +439,20 @@ async function main() {
             license_number: null,
             description: desc,
             apps: [],
-            rapidin_driver_id: null,
+            driver_id_fleet: null,
           });
+          // Obtener license_number desde Yango si el driver_id_fleet se resolvió
+          if (created?.driver_id_fleet && (!created.license_number || !created.license_number.trim())) {
+            try {
+              const { getContractorProfile } = await import('../services/yangoService.js');
+              const profile = await getContractorProfile(created.driver_id_fleet);
+              if (profile.success && profile.license_number) {
+                const { query } = await import('../config/database.js');
+                await query('UPDATE module_miauto_solicitud SET license_number = $1 WHERE id = $2', [profile.license_number, created.id]);
+                created.license_number = profile.license_number;
+              }
+            } catch { /* no bloquear la creación si falla la licencia */ }
+          }
           await applyUpdate(created.id);
           stats.created++;
         } catch (e) {

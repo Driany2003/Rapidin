@@ -331,7 +331,12 @@ export default function YegoMiAutoLoans() {
               <tbody className="divide-y divide-gray-200">
                 {displayItems.map((row) => (
                   <tr key={row.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{conductorDisplay(row)}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                      {conductorDisplay(row)}
+                      {row.yango_work_status === 'fired' && row.fired_driver_name && (
+                        <div className="text-xs text-red-500">Inactivo: {row.fired_driver_name}</div>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-700">{row.dni}</td>
                     <td className="px-4 py-3 text-sm font-mono text-gray-800">{row.license_number || '—'}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{row.cronograma_name || '—'}</td>

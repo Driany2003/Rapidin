@@ -80,7 +80,7 @@ router.get('/alquiler-venta', async (req, res) => {
 // GET /api/miauto/solicitudes
 router.get('/solicitudes', async (req, res) => {
   try {
-    const { status, country, date_from, date_to, page, limit, park_id, rapidin_driver_id, driver, q } = req.query;
+    const { status, country, date_from, date_to, page, limit, park_id, driver_id_fleet, driver, q } = req.query;
     const filters = {
       status,
       country,
@@ -89,7 +89,7 @@ router.get('/solicitudes', async (req, res) => {
       page,
       limit,
       park_id: trimOrUndefined(park_id),
-      rapidin_driver_id: trimOrUndefined(rapidin_driver_id),
+      driver_id_fleet: trimOrUndefined(driver_id_fleet),
       driver: typeof driver === 'string' ? driver : undefined,
       q: typeof q === 'string' ? q : undefined,
     };
@@ -123,7 +123,7 @@ router.get('/active-blocking', async (req, res) => {
       ? (await getPartnerNameById(activeInfo.park_id) || activeInfo.park_id)
       : 'Sin flota asignada';
     const activeParkId = trimOrUndefined(activeInfo.park_id) ?? null;
-    const currentRapidinId = trimOrUndefined(req.query.rapidin_driver_id);
+    const currentRapidinId = trimOrUndefined(req.query.driver_id_fleet);
     const currentParkId = currentRapidinId ? await getParkIdByRapidinDriverId(currentRapidinId) : null;
     const sameFlotaResult = sameFlota(activeParkId, currentParkId);
 
@@ -143,7 +143,7 @@ router.get('/active-blocking', async (req, res) => {
 // POST /api/miauto/solicitudes
 router.post('/solicitudes', async (req, res) => {
   try {
-    const { country, dni, phone, email, license_number, description, rapidin_driver_id } = req.body;
+    const { country, dni, phone, email, license_number, description, driver_id_fleet } = req.body;
     if (!dni || !country) return errorResponse(res, 'country y dni son requeridos', 400);
 
     const solicitud = await createSolicitud({
@@ -154,7 +154,7 @@ router.post('/solicitudes', async (req, res) => {
       license_number,
       description,
       apps: getAppsFromBody(req.body),
-      rapidin_driver_id,
+      driver_id_fleet,
     });
     auditMiautoMutation('solicitud.created', 'solicitud', solicitud?.id, { country, dni });
     return successResponse(res, solicitud, 'Solicitud creada', 201);

@@ -15,6 +15,9 @@ export interface AlquilerVentaListItem {
   created_at: string;
   fecha_inicio_cobro_semanal: string;
   driver_name?: string;
+  working_driver_name?: string;
+  fired_driver_name?: string;
+  yango_work_status?: string;
   phone?: string;
   email?: string;
   cronograma_name?: string;
@@ -33,6 +36,7 @@ export interface AlquilerVentaListItem {
 }
 
 export function conductorDisplay(row: AlquilerVentaListItem): string {
+  if (row.yango_work_status === 'fired' && row.working_driver_name) return row.working_driver_name;
   if (row.driver_name) return row.driver_name;
   if (row.phone) return `Tel: ${row.phone}`;
   if (row.email) return row.email;

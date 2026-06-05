@@ -10,6 +10,7 @@ import {
   MIAUTO_PARK_ID,
   getDriverInfoByPhones,
   normalizePhoneForDriversMatch,
+  resolveFleetDriverIdFromDni,
 } from '../utils/miautoDriverLookup.js';
 import { buildDriverNameSearchSql } from '../../../utils/driverNameSearch.js';
 
@@ -62,10 +63,10 @@ export class ActiveSolicitudError extends Error {
 }
 
 export const listSolicitudes = async (filters = {}) => {
-  const { status, country, date_from, date_to, page = 1, limit = 20, driver_phone, driver_country, park_id, rapidin_driver_id, forDriver, driver: driverNameFilter, q: qNameFilter } = filters;
+  const { status, country, date_from, date_to, page = 1, limit = 20, driver_phone, driver_country, park_id, driver_id_fleet, forDriver, driver: driverNameFilter, q: qNameFilter } = filters;
   const params = [];
   let n = 1;
-  let fromJoin = ' FROM module_miauto_solicitud s LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id ';
+  let fromJoin = ' FROM module_miauto_solicitud s LEFT JOIN module_rapidin_drivers rd ON rd.id::text = s.driver_id_fleet ';
   if (forDriver) {
     fromJoin += ' LEFT JOIN module_miauto_cronograma c ON c.id = s.cronograma_id LEFT JOIN module_miauto_cronograma_vehiculo v ON v.id = s.cronograma_vehiculo_id ';
   }
@@ -99,7 +100,7 @@ export const listSolicitudes = async (filters = {}) => {
       n = dSearch.nextParam;
     }
   }
-  const rid = trimOrUndefined(rapidin_driver_id);
+  const rid = trimOrUndefined(driver_id_fleet);
   const pid = trimOrUndefined(park_id);
   if (pid) {
     where += ` AND COALESCE(TRIM(rd.park_id), '') = $${n}`;
@@ -114,14 +115,14 @@ export const listSolicitudes = async (filters = {}) => {
     params.push(phoneForDb, driver_phone, digitsOnly, last9);
     n += 4;
     if (rid) {
-      where += ` AND (${phoneMatch} OR s.rapidin_driver_id = $${n})`;
+      where += ` AND (${phoneMatch} OR s.driver_id_fleet = $${n})`;
       params.push(rid);
       n += 1;
     } else {
       where += ` AND ${phoneMatch}`;
     }
   } else if (rid) {
-    where += ` AND s.rapidin_driver_id = $${n}`;
+    where += ` AND s.driver_id_fleet = $${n}`;
     params.push(rid);
     n += 1;
   }
@@ -141,7 +142,8 @@ export const listSolicitudes = async (filters = {}) => {
             rd.first_name AS driver_first_name, rd.last_name AS driver_last_name,
             c.name AS cronograma_name, c.tasa_interes_mora AS cronograma_tasa_interes_mora, c.bono_tiempo_activo AS cronograma_bono_tiempo_activo,
             v.name AS vehiculo_name, v.inicial AS vehiculo_inicial, v.inicial_moneda AS vehiculo_inicial_moneda, v.cuotas_semanales AS vehiculo_cuotas_semanales, v.image AS vehiculo_image`
-    : `SELECT s.id, s.dni, s.phone, s.email, s.license_number, s.status, s.created_at,
+    : `SELECT s.id, s.dni, s.phone, s.email, s.license_number, s.status, s.created_at, s.driver_id_fleet,
+            s.placa_asignada,
             rd.first_name AS driver_first_name, rd.last_name AS driver_last_name`;
   const dataResult = await query(
     `${selectFields}
@@ -195,12 +197,48 @@ export const listSolicitudes = async (filters = {}) => {
     .map((r) => r.phone);
   const driverInfoList = await getDriverInfoByPhones(MIAUTO_PARK_ID, phonesForLookupList);
 
+  // Working drivers por placa
+  const placas = [...new Set(dataResult.rows.map((r) => r.placa_asignada).filter(Boolean))];
+  const workingByPlaca = new Map();
+  const statusByDriverIdList = new Map();
+  const fleetIds = [...new Set(dataResult.rows.map((r) => r.driver_id_fleet).filter(Boolean))];
+  if (placas.length > 0) {
+    const { rows: wRows } = await query(
+      `SELECT UPPER(REGEXP_REPLACE(TRIM(COALESCE(car_normalized_number, car_number, '')), ' ', '', 'g')) AS placa_norm,
+              first_name, last_name
+       FROM drivers
+       WHERE TRIM(COALESCE(park_id::text, '')) = $1
+         AND work_status = 'working'
+         AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(car_normalized_number, car_number, '')), ' ', '', 'g')) = ANY($2::text[])`,
+      [MIAUTO_PARK_ID, placas.map((p) => p.toUpperCase().replace(/\s/g, ''))]
+    );
+    for (const w of wRows) {
+      workingByPlaca.set(w.placa_norm, [w.first_name, w.last_name].filter(Boolean).join(' ').trim());
+    }
+  }
+  if (fleetIds.length > 0) {
+    const { rows: sRows } = await query(
+      `SELECT driver_id, work_status, first_name, last_name FROM drivers WHERE driver_id = ANY($1::text[])`,
+      [fleetIds]
+    );
+    for (const s of sRows) {
+      statusByDriverIdList.set(s.driver_id, { status: s.work_status, name: [s.first_name, s.last_name].filter(Boolean).join(' ').trim() });
+    }
+  }
+
   const rows = dataResult.rows.map((r) => {
     let driverName = nameFromRapidinList(r);
+    if (!driverName && r.driver_id_fleet) {
+      const drvInfo = statusByDriverIdList.get(r.driver_id_fleet);
+      if (drvInfo?.name) driverName = drvInfo.name;
+    }
     if (!driverName && r.phone) {
       const { digits, last9 } = normalizePhoneForDriversMatch(r.phone);
       driverName = driverInfoList.names[digits] || driverInfoList.names[last9] || null;
     }
+    const workingName = (r.placa_asignada && workingByPlaca.get(r.placa_asignada.toUpperCase().replace(/\s/g, ''))) || null;
+    const driverStatus = (r.driver_id_fleet && statusByDriverIdList.get(r.driver_id_fleet)?.status) || null;
+    const isFired = driverStatus === 'fired';
     let licenseNum = r.license_number != null && String(r.license_number).trim() !== '' ? String(r.license_number).trim() : null;
     if (!licenseNum && r.phone) {
       const { digits, last9 } = normalizePhoneForDriversMatch(r.phone);
@@ -215,6 +253,9 @@ export const listSolicitudes = async (filters = {}) => {
       status: r.status,
       created_at: r.created_at,
       driver_name: driverName || undefined,
+      working_driver_name: workingName || undefined,
+      fired_driver_name: isFired ? driverName : undefined,
+      yango_work_status: driverStatus || undefined,
     };
     if (forDriver) {
       out.country = r.country || undefined;
@@ -308,11 +349,11 @@ export const listAlquilerVenta = async (filters = {}) => {
 
   const fromBase = `
      FROM module_miauto_solicitud s
-     LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
+     LEFT JOIN module_rapidin_drivers rd ON rd.id::text = s.driver_id_fleet
      LEFT JOIN module_miauto_cronograma c ON c.id = s.cronograma_id
      LEFT JOIN module_miauto_cronograma_vehiculo v ON v.id = s.cronograma_vehiculo_id`;
 
-  const listSql = `SELECT s.id, s.cronograma_id, s.cronograma_vehiculo_id, s.dni, s.phone, s.email, s.license_number, s.status, s.created_at, s.fecha_inicio_cobro_semanal, s.placa_asignada,
+  const listSql = `SELECT s.id, s.cronograma_id, s.cronograma_vehiculo_id, s.dni, s.phone, s.email, s.license_number, s.status, s.created_at, s.fecha_inicio_cobro_semanal, s.placa_asignada, s.driver_id_fleet,
             rd.first_name AS driver_first_name, rd.last_name AS driver_last_name,
             c.name AS cronograma_name, v.name AS vehiculo_name, v.cuotas_semanales AS vehiculo_cuotas_semanales
      ${fromBase}
@@ -371,12 +412,48 @@ export const listAlquilerVenta = async (filters = {}) => {
     .map((r) => r.phone);
   const driverInfoAv = await getDriverInfoByPhones(MIAUTO_PARK_ID, phonesForLookup);
 
+  // Working drivers por placa
+  const placasAv = [...new Set(rows.map((r) => r.placa_asignada).filter(Boolean))];
+  const workingByPlacaAv = new Map();
+  const statusByDriverId = new Map();
+  const fleetIds = [...new Set(rows.map((r) => r.driver_id_fleet).filter(Boolean))];
+  if (placasAv.length > 0) {
+    const { rows: wRows } = await query(
+      `SELECT UPPER(REGEXP_REPLACE(TRIM(COALESCE(car_normalized_number, car_number, '')), ' ', '', 'g')) AS placa_norm,
+              first_name, last_name
+       FROM drivers
+       WHERE TRIM(COALESCE(park_id::text, '')) = $1
+         AND work_status = 'working'
+         AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(car_normalized_number, car_number, '')), ' ', '', 'g')) = ANY($2::text[])`,
+      [MIAUTO_PARK_ID, placasAv.map((p) => p.toUpperCase().replace(/\s/g, ''))]
+    );
+    for (const w of wRows) {
+      workingByPlacaAv.set(w.placa_norm, [w.first_name, w.last_name].filter(Boolean).join(' ').trim());
+    }
+  }
+  if (fleetIds.length > 0) {
+    const { rows: sRows } = await query(
+      `SELECT driver_id, work_status, first_name, last_name FROM drivers WHERE driver_id = ANY($1::text[])`,
+      [fleetIds]
+    );
+    for (const s of sRows) {
+      statusByDriverId.set(s.driver_id, { status: s.work_status, name: [s.first_name, s.last_name].filter(Boolean).join(' ').trim() });
+    }
+  }
+
   const data = rows.map((r) => {
     let driverName = nameFromRapidin(r);
+    if (!driverName && r.driver_id_fleet) {
+      const drvInfo = statusByDriverId.get(r.driver_id_fleet);
+      if (drvInfo?.name) driverName = drvInfo.name;
+    }
     if (!driverName && r.phone) {
       const { digits, last9 } = normalizePhoneForDriversMatch(r.phone);
       driverName = driverInfoAv.names[digits] || driverInfoAv.names[last9] || null;
     }
+    const workingName = (r.placa_asignada && workingByPlacaAv.get(r.placa_asignada.toUpperCase().replace(/\s/g, ''))) || null;
+    const driverStatus = (r.driver_id_fleet && statusByDriverId.get(r.driver_id_fleet)?.status) || null;
+    const isFired = driverStatus === 'fired';
     let licenseNum = licenseFromSolicitud(r);
     if (!licenseNum && r.phone) {
       const { digits, last9 } = normalizePhoneForDriversMatch(r.phone);
@@ -412,6 +489,9 @@ export const listAlquilerVenta = async (filters = {}) => {
       fecha_inicio_cobro_semanal: r.fecha_inicio_cobro_semanal,
       placa_asignada: r.placa_asignada != null && String(r.placa_asignada).trim() !== '' ? String(r.placa_asignada).trim() : undefined,
       driver_name: driverName || undefined,
+      working_driver_name: workingName || undefined,
+      fired_driver_name: isFired ? driverName : undefined,
+      yango_work_status: driverStatus || undefined,
       cronograma_name: r.cronograma_name || undefined,
       vehiculo_name: r.vehiculo_name || undefined,
       cuotas_semanales_plan: cuotasPlan,
@@ -432,7 +512,7 @@ export const getSolicitudById = async (id, options = {}) => {
   const result = await query(
     `SELECT id, country, dni, phone, email, license_number, description,
             status, rejection_reason, cited_at, cited_by, appointment_date, reagendo_count,
-            reviewed_at, reviewed_by, withdrawn_at, withdrawal_reason, observations, created_at, updated_at, rapidin_driver_id,
+            reviewed_at, reviewed_by, withdrawn_at, withdrawal_reason, observations, created_at, updated_at, driver_id_fleet,
             cronograma_id, cronograma_vehiculo_id, pago_tipo, pago_estado, fecha_inicio_cobro_semanal, placa_asignada,
             COALESCE(apps_trabajadas, '[]'::jsonb) AS apps_trabajadas
      FROM module_miauto_solicitud WHERE id = $1`,
@@ -497,22 +577,38 @@ export const getSolicitudById = async (id, options = {}) => {
   row.total_validado = validadoPack.total;
   row.total_validado_usd = validadoPack.totalUsd;
 
-  let licenseNumber = row.license_number;
-  if (
-    !skipYangoLicenseLookup &&
-    (!licenseNumber || String(licenseNumber).trim() === '') &&
-    row.phone
-  ) {
-    const { licenses } = await getDriverInfoByPhones(MIAUTO_PARK_ID, [row.phone]);
-    const { digits, last9 } = normalizePhoneForDriversMatch(row.phone);
-    const fromDrv = licenses[digits] || licenses[last9];
-    if (fromDrv) licenseNumber = fromDrv;
+  // Datos del conductor desde Yango
+  if (row.driver_id_fleet) {
+    try {
+      const { getContractorProfile } = await import('../../../services/yangoService.js');
+      const profile = await getContractorProfile(row.driver_id_fleet);
+      if (profile.success) {
+        row.yango_license = profile.license_number;
+        if (!row.license_number || String(row.license_number).trim() === '') {
+          row.license_number = profile.license_number;
+        }
+      }
+    } catch { /* no bloquear */ }
+  }
+  if (row.placa_asignada) {
+    const { rows: workingRows } = await query(
+      `SELECT first_name, last_name FROM drivers
+       WHERE TRIM(COALESCE(park_id::text, '')) = $1
+         AND work_status = 'working'
+         AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(car_normalized_number, car_number, '')), ' ', '', 'g')) =
+             UPPER(REGEXP_REPLACE(TRIM($2), ' ', '', 'g'))
+       LIMIT 1`,
+      [MIAUTO_PARK_ID, row.placa_asignada]
+    );
+    if (workingRows.length > 0) {
+      row.working_driver_name = [workingRows[0].first_name, workingRows[0].last_name].filter(Boolean).join(' ').trim();
+    }
   }
 
   // Devolver objeto plano para que cronograma y cronograma_vehiculo se serialicen correctamente en la respuesta API
   return {
     ...row,
-    license_number: licenseNumber,
+    working_driver_name: row.working_driver_name || null,
     cronograma: row.cronograma,
     cronograma_vehiculo: row.cronograma_vehiculo,
     citas_historial: row.citas_historial,
@@ -526,7 +622,7 @@ export const getSolicitudById = async (id, options = {}) => {
 export async function getActiveSolicitudInfo(phone, driverCountry, rapidinDriverId) {
   const params = [];
   let n = 1;
-  const fromJoin = ' FROM module_miauto_solicitud s LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id ';
+  const fromJoin = ' FROM module_miauto_solicitud s LEFT JOIN module_rapidin_drivers rd ON rd.id::text = s.driver_id_fleet ';
   let where = " WHERE s.status IN ('pendiente', 'citado', 'aprobado') ";
   if (phone && driverCountry) {
     const phoneForDb = normalizePhoneForDb(phone, driverCountry);
@@ -536,7 +632,7 @@ export async function getActiveSolicitudInfo(phone, driverCountry, rapidinDriver
     params.push(phoneForDb, phone, digitsOnly, last9);
     n += 4;
   } else if (rapidinDriverId) {
-    where += ` AND s.rapidin_driver_id = $${n}`;
+    where += ` AND s.driver_id_fleet = $${n}`;
     params.push(rapidinDriverId);
     n += 1;
   } else {
@@ -552,15 +648,18 @@ export async function getActiveSolicitudInfo(phone, driverCountry, rapidinDriver
 }
 
 export const createSolicitud = async (data) => {
-  const { country, dni, phone, email, license_number, description, apps = [], rapidin_driver_id } = data;
-  const rapidinDriverIdVal = trimOrUndefined(rapidin_driver_id) ?? null;
+  const { country, dni, phone, email, license_number, description, apps = [], driver_id_fleet } = data;
+  let rapidinDriverIdVal = trimOrUndefined(driver_id_fleet) ?? null;
+  if (!rapidinDriverIdVal && dni) {
+    rapidinDriverIdVal = await resolveFleetDriverIdFromDni(dni);
+  }
   const driverCountry = country || 'PE';
   const activeInfo = await getActiveSolicitudInfo(phone, driverCountry, rapidinDriverIdVal);
   if (activeInfo) throw new ActiveSolicitudError(activeInfo.status, activeInfo.park_id);
 
   const appsArr = normalizeAppsToCodes(apps);
   const result = await query(
-    `INSERT INTO module_miauto_solicitud (country, dni, phone, email, license_number, description, apps_trabajadas, rapidin_driver_id)
+    `INSERT INTO module_miauto_solicitud (country, dni, phone, email, license_number, description, apps_trabajadas, driver_id_fleet)
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
      RETURNING *`,
     [country || 'PE', dni || null, phone || null, email || null, license_number || null, description || null, JSON.stringify(appsArr), rapidinDriverIdVal]

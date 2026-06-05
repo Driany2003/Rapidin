@@ -44,9 +44,9 @@ async function main() {
                cs.amount_due, cs.late_fee, cs.paid_amount, cs.moneda
         FROM module_miauto_cuota_semanal cs
         JOIN module_miauto_solicitud s ON s.id = cs.solicitud_id
-        LEFT JOIN module_rapidin_drivers rd ON rd.id = s.rapidin_driver_id
+        LEFT JOIN module_rapidin_drivers rd ON rd.id = s.driver_id_fleet
         LEFT JOIN drivers d ON (
-            LOWER(REGEXP_REPLACE(d.driver_id::text, '-', '', 'g')) = LOWER(REGEXP_REPLACE(s.rapidin_driver_id::text, '-', '', 'g'))
+            LOWER(REGEXP_REPLACE(d.driver_id::text, '-', '', 'g')) = LOWER(REGEXP_REPLACE(s.driver_id_fleet::text, '-', '', 'g'))
             AND d.park_id = 'fafd623109d740f8a1f15af7c3dd86c6'
         )
         WHERE cs.id = ANY($1::uuid[])

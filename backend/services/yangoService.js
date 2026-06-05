@@ -378,9 +378,55 @@ export async function getDriverIncome(dateFrom, dateTo, driverId, parkId = null,
       raw: res.data
     };
   } catch (error) {
-    if (error.response) {
-      return { success: false, error: error.response.status === 403 ? '403 cookie expirada' : `Error ${error.response.status}`, message: error.response.data?.message || error.response.data };
+    return { success: false, error: error.response ? `Error ${error.response.status}` : error.message };
+  }
+}
+
+/**
+ * Busca un contractor en Yango Fleet por DNI, nombre o teléfono.
+ * POST /api/fleet/contractor-profiles-manager/v1/suggestions/list
+ */
+export async function searchFleetContractor(queryText, cookieOverride = null) {
+  const text = String(queryText || '').trim();
+  if (!text) return { success: false, error: 'query vacío' };
+  const cookie = cookieOverride || fleetCookieCobroForMiAuto();
+  if (!cookie) return { success: false, error: 'cookie de Fleet no configurada' };
+  const url = `${fleetBaseUrl()}/api/fleet/contractor-profiles-manager/v1/suggestions/list`;
+  const body = { query: { text } };
+  const headers = { 'Content-Type': 'application/json', 'Accept-Language': 'es-ES,es', Cookie: cookie, 'X-Park-Id': fleetParkIdForMiAuto() };
+  try {
+    const res = await axios.post(url, body, { headers, timeout: 15000 });
+    const suggestions = res.data?.suggestions;
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      return { success: false, error: 'sin resultados' };
     }
-    return { success: false, error: error.message };
+    const c = suggestions[0].contractor;
+    return {
+      success: true,
+      contractor_id: c.contractor_id,
+      name: { first: c.name?.first, last: c.name?.last },
+      phone: c.phone,
+    };
+  } catch (error) {
+    return { success: false, error: error.response?.status ? `HTTP ${error.response.status}` : (error.message || 'error de red') };
+  }
+}
+
+/**
+ * Obtiene el perfil de un contractor desde Yango Fleet.
+ * GET /api/fleet/contractor-profiles-manager/v1/contractor-profile/contractor-data
+ */
+export async function getContractorProfile(contractorId) {
+  const id = String(contractorId || '').trim();
+  if (!id) return { success: false, error: 'contractor_id vacío' };
+  const cookie = fleetCookieCobroForMiAuto();
+  if (!cookie) return { success: false, error: 'cookie de Fleet no configurada' };
+  const url = `${fleetBaseUrl()}/api/fleet/contractor-profiles-manager/v1/contractor-profile/contractor-data?contractor_profile_id=${encodeURIComponent(id)}`;
+  const headers = { 'Accept-Language': 'es-ES,es', Cookie: cookie, 'X-Park-Id': fleetParkIdForMiAuto() };
+  try {
+    const res = await axios.get(url, { headers, timeout: 15000 });
+    return { success: true, license_number: res.data?.license_number || null, phone: res.data?.phone || null };
+  } catch (error) {
+    return { success: false, error: error.response?.status ? `HTTP ${error.response.status}` : error.message };
   }
 }
