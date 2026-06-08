@@ -2573,7 +2573,6 @@ export async function recalcMontosCuotasSemanalesDesdeCronograma(opts = {}) {
   const solicitudesAfectadas = new Set();
 
   for (const row of rows) {
-    if (String(row.montos_fuente || '').toLowerCase() === 'excel') continue;
 
     const crId = String(row.cronograma_id);
     let cronograma = cronogramaCache.get(crId);

@@ -390,11 +390,11 @@ async function main() {
     const params = [];
     let n = 1;
     for (const c of dedupedArr) {
-      vals.push(`($${n}::uuid, $${n+1}::date, $${n+2}::date, $${n+3}, $${n+4}, $${n+5}, $${n+6}, $${n+7}, $${n+8}, $${n+9}, $${n+10}, $${n+11}, $${n+12}, $${n+13}, $${n+14}, 'excel')`);
-      params.push(c.solicitud_id, c.week_start_date, c.due_date, c.num_viajes, c.partner_fees_raw, c.partner_fees_83, c.bono_auto, c.cuota_semanal, c.amount_due, c.paid_amount, c.status, c.moneda, c.pct_comision, c.cobro_saldo, c.late_fee);
-      n += 15;
+      vals.push(`($${n}::uuid, $${n+1}::date, $${n+2}::date, $${n+3}, $${n+4}, $${n+5}, $${n+6}, $${n+7}, $${n+8}, $${n+9}, $${n+10}, $${n+11}, $${n+12}, $${n+13}, $${n+14}, $${n+15}::date, 'excel')`);
+      params.push(c.solicitud_id, c.week_start_date, c.due_date, c.num_viajes, c.partner_fees_raw, c.partner_fees_83, c.bono_auto, c.cuota_semanal, c.amount_due, c.paid_amount, c.status, c.moneda, c.pct_comision, c.cobro_saldo, c.late_fee, c.mora_desde);
+      n += 16;
     }
-    await query(`INSERT INTO module_miauto_cuota_semanal (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, bono_auto, cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, late_fee, montos_fuente) VALUES ${vals.join(', ')} ON CONFLICT (solicitud_id, week_start_date) DO NOTHING`, params);
+    await query(`INSERT INTO module_miauto_cuota_semanal (solicitud_id, week_start_date, due_date, num_viajes, partner_fees_raw, partner_fees_83, bono_auto, cuota_semanal, amount_due, paid_amount, status, moneda, pct_comision, cobro_saldo, late_fee, mora_desde, montos_fuente) VALUES ${vals.join(', ')} ON CONFLICT (solicitud_id, week_start_date) DO NOTHING`, params);
     stats.db_inserts += cuotasBatch.length;
     cuotasBatch.length = 0;
   }
@@ -548,6 +548,7 @@ async function main() {
         pct_comision: 0,
         cobro_saldo: 0,
         late_fee: 0,
+        mora_desde: paidFlag === false && dueYmd < limaToday ? dueYmd : null,
       };
 
       stats.aplicables++;
@@ -571,6 +572,7 @@ async function main() {
         pct_comision: payload.pct_comision,
         cobro_saldo: payload.cobro_saldo,
         late_fee: payload.late_fee,
+        mora_desde: payload.mora_desde,
       });
       if (cuotasBatch.length >= BATCH_SIZE) await flushBatch();
     }

@@ -70,22 +70,20 @@ function currentMondayCuotaContext() {
 }
 
 /**
- * Para DNI 41689665 y 09766265: el recaudo (partner_fees) se obtiene del conductor
- * encontrado por licencia en Yango, no del conductor de la placa.
+ * Viajes desde el conductor working de la placa, no del driver_id_fleet.
+ * Aplica para todos los conductores. Si no hay conductor working con esa placa → viajes = 0.
  * @returns {{ driver_id: string, park_id: string } | null}
  */
-async function resolveIncomeDriverFromDni(dni) {
-  const clean = (dni || '').replace(/\D/g, '');
-  if (clean !== '41689665' && clean !== '09766265') return null;
-  const searchLic = clean === '41689665' ? 'Q41689665' : 'Q09766265';
+async function resolveTripsFromPlacaDriver(placa) {
+  if (!placa) return null;
+  const placaNorm = String(placa).trim().toUpperCase().replace(/\s+/g, '');
   const res = await query(
     `SELECT d.driver_id, d.park_id FROM drivers d
-     WHERE TRIM(COALESCE(d.park_id::text, '')) = $1
-       AND (UPPER(REGEXP_REPLACE(COALESCE(d.license_normalized_number, d.license_number, ''), '[^A-Z0-9]', '', 'g')) = $2
-            OR UPPER(REGEXP_REPLACE(COALESCE(d.license_number, ''), '[^A-Z0-9]', '', 'g')) = $2)
-     ORDER BY CASE WHEN d.work_status = 'working' THEN 0 ELSE 1 END
+     WHERE TRIM(COALESCE(d.park_id::text, '')) = \$1
+       AND d.work_status = 'working'
+       AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(d.car_normalized_number, d.car_number, '')), '\\\\s', '', 'g')) = \$2
      LIMIT 1`,
-    [MIAUTO_PARK_ID, searchLic]
+    [MIAUTO_PARK_ID, placaNorm]
   );
   return res.rows.length > 0 ? { driver_id: res.rows[0].driver_id, park_id: res.rows[0].park_id || MIAUTO_PARK_ID } : null;
 }
@@ -116,8 +114,6 @@ async function ensureCuotaOneSolicitud(sol, cuotaWeekMonday, dateFrom, dateTo, o
     .trim() || 'Conductor';
   const sinDriverYango = !sol.external_driver_id || String(sol.external_driver_id).trim() === '';
 
-  const altDriver = await resolveIncomeDriverFromDni(sol.dni);
-
   let incomeResult;
   if (esPrimera || sinDriverYango) {
     incomeResult = { success: true, count_completed: 0, partner_fees: 0 };
@@ -127,18 +123,21 @@ async function ensureCuotaOneSolicitud(sol, cuotaWeekMonday, dateFrom, dateTo, o
       logger.info(`Mi Auto: solicitud ${sol.solicitud_id} primera cuota semanal — sin consulta Yango (${driverLabel}${placaStr})`);
     }
   } else {
-    const trips = await getDriverIncomeWithRetries(dateFrom, dateTo, sol.external_driver_id, sol.park_id, incomeMaxAttempts);
-    if (altDriver) {
-      const income = await getDriverIncomeWithRetries(dateFrom, dateTo, altDriver.driver_id, altDriver.park_id, incomeMaxAttempts);
-      incomeResult = {
-        success: trips.success || income.success,
-        count_completed: trips.count_completed ?? 0,
-        partner_fees: income.success ? income.partner_fees : 0,
-        error: (!trips.success || !income.success) ? (trips.error || income.error) : null,
-      };
-    } else {
-      incomeResult = trips;
-    }
+    const placaTrips = await resolveTripsFromPlacaDriver(sol.placa_asignada);
+    // Viajes: del conductor working de la placa. Si no hay → 0.
+    const viajesSource = placaTrips;
+    const viajes = viajesSource
+      ? await getDriverIncomeWithRetries(dateFrom, dateTo, viajesSource.driver_id, viajesSource.park_id, incomeMaxAttempts)
+      : { success: true, count_completed: 0, partner_fees: 0 };
+    // Recaudo: siempre del driver_id_fleet
+    const recaudo = await getDriverIncomeWithRetries(dateFrom, dateTo, sol.external_driver_id, sol.park_id, incomeMaxAttempts);
+
+    incomeResult = {
+      success: (viajesSource ? viajes.success : true) || recaudo.success,
+      count_completed: (viajesSource && viajes.success) ? viajes.count_completed : 0,
+      partner_fees: recaudo.success ? recaudo.partner_fees : 0,
+      error: (!viajes.success || !recaudo.success) ? (viajes.error || recaudo.error) : null,
+    };
   }
 
   const ensuredId = await generateWeeklyCharge({
