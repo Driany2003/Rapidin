@@ -136,7 +136,7 @@ router.post('/solicitudes/:id/send-whatsapp', validateUUID, async (req, res) => 
     }
     const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
     if (!message) return errorResponse(res, 'El mensaje no puede estar vacío', 400);
-    const result = await sendWhatsAppMessage(phone, message);
+    const result = await sendWhatsAppMessage(phone, message, process.env.WHATSAPP_MIAUTO_TOKEN);
     if (!result.success) return errorResponse(res, result.error || 'Error al enviar WhatsApp', 400);
     return successResponse(res, { sent: true }, 'Mensaje enviado por WhatsApp');
   } catch (error) {

@@ -76,15 +76,16 @@ function normalizePhone(phone) {
  * Envía un mensaje de texto por WhatsApp usando la API 3W (misma instancia que el OTP).
  * @param {string} phone - Número con o sin + (se normaliza a +digits)
  * @param {string} message - Texto a enviar
+ * @param {string|null} [instanceId] - Token de instancia 3W (si no se pasa, usa WHATSAPP_OTP_TOKEN)
  * @returns {Promise<{ success: boolean, error?: string }>}
  */
-export const sendWhatsAppMessage = async (phone, message) => {
+export const sendWhatsAppMessage = async (phone, message, instanceId = null) => {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone || normalizedPhone === '+') {
         return { success: false, error: 'Número de teléfono inválido' };
     }
     const phoneWithPlus = normalizedPhone.startsWith('+') ? normalizedPhone : `+${normalizedPhone}`;
-    const whatsappInstanceId = process.env.WHATSAPP_OTP_TOKEN || process.env.WHATSAPP_INSTANCE_ID;
+    const whatsappInstanceId = instanceId || process.env.WHATSAPP_OTP_TOKEN || process.env.WHATSAPP_INSTANCE_ID;
     if (!whatsappInstanceId) {
         return { success: false, error: 'WHATSAPP_OTP_TOKEN no configurado' };
     }

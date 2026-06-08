@@ -239,20 +239,6 @@ export default function YegoMiAutoRentSaleDetail() {
       return 0;
     })[0];
 
-    let detallePago = '';
-    if (cuotaReciente) {
-      const sym = symMoneda(monedaCuotaRow(cuotaReciente));
-      const viajes = cuotaReciente.num_viajes ?? 0;
-      const cuotaSemanal = Number(cuotaReciente.cuota_semanal || cuotaReciente.amount_due || 0);
-      const pagoTotal = Number(cuotaReciente.amount_due || cuotaReciente.cuota_semanal || 0);
-      const pf83 = Number(cuotaReciente.partner_fees_83 || 0);
-      const cobroSaldo = Number(cuotaReciente.cobro_saldo || 0);
-      const pagado = Number(cuotaReciente.paid_amount || 0);
-      const pendiente = Math.max(0, pagoTotal - pagado);
-      const semana = miautoSemanaOrdinalPorVencimiento(cuotas, cuotaReciente.due_date, cuotaReciente.week_start_date);
-      detallePago = `\n\nLe compartimos el detalle de su pago:\n- Semana ${semana}: ${viajes} viajes - ${sym} ${cuotaSemanal.toFixed(2)}\n\nDESCUENTOS:\n🔹 Descuento del app: ${sym} ${pf83.toFixed(2)}\n🔹 Cobro de saldo: ${sym} ${cobroSaldo.toFixed(2)}\n\n------------------------------------------------------------------------\nPENDIENTE:\n🔹 Pago Total : ${sym} ${pendiente.toFixed(2)} 🚨\n`;
-    }
-
     let defaultText: string;
 
     if (overdueCuotas.length > 0) {
@@ -271,24 +257,35 @@ export default function YegoMiAutoRentSaleDetail() {
         return `• Semana ${semana}: ${sym} ${total.toFixed(2)} (venció ${fecha})`;
       });
       const mas = overdueCuotas.length > 10 ? `\n• Y ${overdueCuotas.length - 10} cuota(s) más.` : '';
-      defaultText = `Hola ${name}, tienes ${overdueCuotas.length} cuota(s) vencida(s) en tu contrato Yego Mi Auto:\n\n${lineas.join('\n')}${mas}${detallePago}\nPor favor regulariza tu situación lo antes posible. Gracias.\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
-    } else if (pendingCuotasHoy.length > 0) {
-      const lineas = pendingCuotasHoy.map((c) => {
-        const sym = symMoneda(monedaCuotaRow(c));
-        const pagoTotal = Number(c.amount_due ?? c.cuota_semanal) || 0;
-        const pagado = Number(c.paid_amount) || 0;
-        const pendiente = Math.max(0, pagoTotal - pagado);
-        const semana = miautoSemanaOrdinalPorVencimiento(cuotas, c.due_date, c.week_start_date);
-        return `• Semana ${semana}: ${sym} ${pendiente.toFixed(2)}`;
-      });
-      defaultText = `Hola ${name}, recuerda que hoy se vence tu cuota de Yego Mi Auto:\n\n${lineas.join('\n')}${detallePago}\nPor favor realiza tu pago a tiempo. Gracias.\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
-    } else {
-      if (cuotaReciente) {
-        defaultText = `Hola estimado 😊${detallePago}\nCualquier consulta quedamos atentos 👍\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
+      defaultText = `Hola ${name},\n\nTienes ${overdueCuotas.length} cuota(s) vencida(s) en tu contrato Yego Mi Auto:\n\n${lineas.join('\n')}${mas}\n\nPor favor regulariza tu situación lo antes posible. Gracias.\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
+    } else if (cuotaReciente) {
+      const sym = symMoneda(monedaCuotaRow(cuotaReciente));
+      const viajes = cuotaReciente.num_viajes ?? 0;
+      const cuotaSemanal = Number(cuotaReciente.cuota_semanal || cuotaReciente.amount_due || 0);
+      const pf83 = Number(cuotaReciente.partner_fees_83 || 0);
+      const cobroDesdeSaldo = Number(cuotaReciente.cobro_desde_saldo_conductor || 0);
+      const pagado = Number(cuotaReciente.paid_amount || 0);
+      const saldoFavor = Number(cuotaReciente.saldo_favor_conductor || 0);
+      const pendiente = Math.max(0, cuotaSemanal - pf83 - pagado - cobroDesdeSaldo);
+      const semana = miautoSemanaOrdinalPorVencimiento(cuotas, cuotaReciente.due_date, cuotaReciente.week_start_date);
+      const cubierto = pendiente <= 0.01;
+
+      let descuentos = '';
+      if (pf83 > 0.01) descuentos += `🔹 Cobro por ingresos (app):    - ${sym} ${pf83.toFixed(2)}\n`;
+      if (cobroDesdeSaldo > 0.01) descuentos += `🔹 Cobro desde tu saldo:        - ${sym} ${cobroDesdeSaldo.toFixed(2)}\n`;
+      if (descuentos) descuentos += `────────────────────────────────────\n`;
+
+      if (cubierto) {
+        defaultText = `Hola ${name},\n\nTe compartimos el resumen de tu semana en Yego Mi Auto - Semana ${semana}:\n\n• ${viajes} viajes | Cuota semanal: ${sym} ${cuotaSemanal.toFixed(2)}\n\nDescuentos aplicados:\n${descuentos}🔸 Cuota neta a pagar:            ${sym} 0.00 ✅\n\n¡Todo cubierto! No tienes pagos pendientes esta semana.`;
+        if (saldoFavor > 0.01) defaultText += `\nSaldo a tu favor: ${sym} ${saldoFavor.toFixed(2)} 🎉`;
+        defaultText += `\n\nCualquier consulta quedamos atentos.\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
       } else {
-        defaultText = `Hola ${name}, te contactamos respecto a tu contrato Yego Mi Auto. Cualquier duda estamos a tu disposición.\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
+        defaultText = `Hola ${name},\n\nTe compartimos el detalle de tu cuota Yego Mi Auto - Semana ${semana}:\n\n• ${viajes} viajes\n• Cuota semanal: ${sym} ${cuotaSemanal.toFixed(2)}\n\nDescuentos aplicados:\n${descuentos}🔸 Cuota neta a pagar:            ${sym} ${pendiente.toFixed(2)}\n\nPendiente por regularizar: ${sym} ${pendiente.toFixed(2)}\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
       }
+    } else {
+      defaultText = `Hola ${name},\n\nTe contactamos respecto a tu contrato Yego Mi Auto. Cualquier duda estamos a tu disposición.\n\n${CUENTAS_BANCARIAS_WHATSAPP}`;
     }
+
     setWhatsAppMessage(defaultText);
     setShowWhatsAppModal(true);
   };
