@@ -881,6 +881,21 @@ function amountDueAndLateForOpenSinglePhase(
     isPrimeraCuotaSemanal
   );
   const paid = round2(parseFloat(paidPhase) || 0);
+  const lateFeeDb = round2(parseFloat(r.late_fee) || 0);
+
+  if (paid > 0.005 && lateFeeDb > 0.005) {
+    const abonoMora = round2(Math.min(paid, lateFeeDb));
+    const abonoCuota = round2(Math.max(0, paid - abonoMora));
+    return {
+      amount_due_sched,
+      mora_sched: lateFeeDb,
+      mora_full: lateFeeDb,
+      mora_saldo_capital_pendiente: 0,
+      late_fee_remaining: round2(Math.max(0, lateFeeDb - abonoMora)),
+      amount_due_remaining: round2(Math.max(0, amount_due_sched - abonoCuota)),
+      obligacion_total_open: round2(amount_due_sched + lateFeeDb),
+    };
+  }
 
   const dueForMora =
     (ymdFromDbDate(r.mora_desde) || null) != null

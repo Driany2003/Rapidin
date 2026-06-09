@@ -1043,7 +1043,7 @@ export default function YegoMiAutoRentSaleDetail() {
                           <div className="text-[10px] font-normal leading-snug text-gray-600">
                             {c.cobro_saldo_referencia.map((ref, idx) => (
                               <span key={idx} className="block tabular-nums">
-                                → Semana {ref.semana}: {miautoFmtMonto(symCuota, ref.monto)}
+                                → Semana {ref.semana ?? (ref.week_start_date ? miautoSemanaOrdinalPorVencimiento(cuotas, ref.week_start_date, ref.week_start_date) : '')}: {miautoFmtMonto(symCuota, ref.monto)}
                               </span>
                             ))}
                           </div>
@@ -1054,6 +1054,7 @@ export default function YegoMiAutoRentSaleDetail() {
                           const pagadoVal = miautoNum(c.paid_amount);
                           if (cobroFleetVal <= 0.005) return null;
                           if (pagadoVal > 0.005) return null;
+                          if (c.cobro_saldo_referencia && c.cobro_saldo_referencia.length > 0) return null;
                           // El cobro se distribuyó → buscar semanas que recibieron el pago
                           const destinos: { semana: number; monto: number }[] = [];
                           for (const cc of cuotas) {
@@ -2085,15 +2086,14 @@ export default function YegoMiAutoRentSaleDetail() {
                   {overdueCuotas.length === 0 && pendingCuotasHoy.length === 0 ? (
                     <p className="mt-1 text-gray-600 text-sm">No hay cuotas vencidas ni pendientes hoy</p>
                   ) : (
-                    <ul className="mt-2 space-y-2">
+                    <ul className="mt-2 space-y-2 max-h-[300px] overflow-y-auto pr-1">
                       {(overdueCuotas.length > 0 ? overdueCuotas : pendingCuotasHoy).slice(0, 10).map((c) => {
                         const sym = symMoneda(monedaCuotaRow(c));
-                        const cuotaNeta = Number(c.cuota_neta ?? c.amount_due) || 0;
+                        const cuotaTotal = Number(c.amount_due || c.cuota_neta) || 0;
                         const pagado = Number(c.paid_amount) || 0;
-                        const pendiente = Math.max(0, cuotaNeta - pagado);
-                        const moraPendiente = Number(c.mora_pendiente ?? c.late_fee) || 0;
+                        const moraPendiente = Math.max(Number(c.mora_pendiente) || 0, Number(c.mora_acumulada ?? c.late_fee) || 0);
                         const moraExtra = Number(c.mora_extra) || 0;
-                        const total = pendiente + moraPendiente + moraExtra;
+                        const total = Number(c.pending_total ?? 0) || (Math.max(0, cuotaTotal - pagado) + moraPendiente + moraExtra);
                         const semana = miautoSemanaOrdinalPorVencimiento(cuotas, c.due_date, c.week_start_date);
                         return (
                           <li key={c.id} className="rounded-lg border border-gray-200 bg-gray-50/80 p-3">
@@ -2102,7 +2102,7 @@ export default function YegoMiAutoRentSaleDetail() {
                               <span>{c.status === 'overdue' ? 'Venció' : 'Vence'} {c.due_date ? formatDateUTC(c.due_date, 'es-ES') : '—'}</span>
                             </div>
                             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
-                              <span><span className="text-gray-500">Cuota:</span> <span className="font-medium text-gray-900">{sym} {pendiente.toFixed(2)}</span></span>
+                              <span><span className="text-gray-500">Cuota:</span> <span className="font-medium text-gray-900">{sym} {cuotaTotal.toFixed(2)}</span></span>
                               {pagado > 0.01 && (
                                 <span><span className="text-gray-500">Pagado:</span> <span className="font-medium text-gray-900">{sym} {pagado.toFixed(2)}</span></span>
                               )}
