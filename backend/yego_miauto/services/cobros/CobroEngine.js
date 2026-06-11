@@ -366,8 +366,8 @@ export async function generateWeeklyCharge({
       cuotaSemanal,
       cobroSaldo,
     });
-    partnerFeesRawStored = snap.partnerFeesRaw;
-    partnerFees83Stored = snap.partnerFees83;
+    partnerFeesRawStored = partnerFeesRaw;
+    partnerFees83Stored = cuotaCalc.partnerFees83;
     partnerFeesYangoStored = partnerFeesRaw > 0.005 ? partnerFeesRaw : null;
     amountDueInsert = snap.amountDue;
     saldoFavorInsert = snap.saldoFavorConductor;

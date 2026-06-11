@@ -143,6 +143,32 @@ export default function YegoMiAutoRentSaleDetail() {
   const { user } = useAuth();
   const driverNameFromState = (location.state as { driver_name?: string })?.driver_name;
 
+  type AlquilerVentaListState = {
+    fromList?: boolean;
+    country?: string;
+    driverSearchInput?: string;
+    cronogramaId?: string;
+    cuotaEstado?: string;
+    page?: number;
+    pageSize?: number;
+  };
+
+  type AlquilerVentaBackState = AlquilerVentaListState & { fromDetail?: boolean };
+
+  const getBackToListState = (): AlquilerVentaBackState | undefined => {
+    const s = location.state as AlquilerVentaListState | null;
+    if (!s?.fromList) return undefined;
+    return {
+      fromDetail: true,
+      country: s.country ?? '',
+      driverSearchInput: s.driverSearchInput ?? '',
+      cronogramaId: s.cronogramaId ?? '',
+      cuotaEstado: s.cuotaEstado ?? '',
+      page: s.page ?? 1,
+      pageSize: s.pageSize ?? 20,
+    };
+  };
+
   const [solicitud, setSolicitud] = useState<SolicitudSummary | null>(null);
   const [cuotas, setCuotas] = useState<CuotaSemanal[]>([]);
   const [comprobantesPagos, setComprobantesPagos] = useState<ComprobanteCuotaSemanal[]>([]);
@@ -654,7 +680,7 @@ export default function YegoMiAutoRentSaleDetail() {
         </div>
         <button
           type="button"
-          onClick={() => navigate('/admin/yego-mi-auto/rent-sale')}
+          onClick={() => navigate('/admin/yego-mi-auto/rent-sale', { state: getBackToListState() })}
           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#8B1A1A] hover:bg-red-50 rounded-lg border border-[#8B1A1A]"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -713,7 +739,7 @@ export default function YegoMiAutoRentSaleDetail() {
       <div className="flex flex-wrap gap-3">
         <button
           type="button"
-          onClick={() => navigate('/admin/yego-mi-auto/rent-sale')}
+          onClick={() => navigate('/admin/yego-mi-auto/rent-sale', { state: getBackToListState() })}
           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#8B1A1A] rounded-lg"
         >
           <ArrowLeft className="w-4 h-4" />

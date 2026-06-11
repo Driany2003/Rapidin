@@ -1476,7 +1476,7 @@ export async function updateMoraDiaria(solicitudId = null, options = {}) {
         const tasa = round2(parseFloat(cronograma?.tasa_interes_mora) || 0);
         moraExtraPersist = round2(pendienteTotal * (tasa / 7) * dias);
       }
-    } else if (statusOut === 'paid' || pagoHecho <= 0.005) {
+    } else if (statusOut === 'paid' || pagoHecho <= 0.005 || pendienteTotal <= 0.005) {
       if (statusOut === 'paid' && moraExtraPersist > 0.005) {
         lateFeePersist = round2(lateFeePersist + moraExtraPersist);
       }
@@ -1804,7 +1804,8 @@ function computeCuotaDerivedForRow(r, cronograma, vehId, options = {}) {
    * Saldo aún por cubrir del periodo: **mora pendiente + cuota pendiente + mora extra** (misma imputación que el pago: primero mora, luego capital).
    * Si la mora queda cubierta, `late_fee` aquí es 0 y solo resta cuota.
    */
-  const cuota_final = round2(amount_due_remaining + late_fee + moraExtraDb);
+  const basePend = round2(amount_due_remaining + late_fee);
+  const cuota_final = basePend <= 0.005 ? 0 : round2(basePend + moraExtraDb);
   return {
     cuota_semanal,
     /** Cuota del periodo: preferentemente columna `amount_due` de la fila (persistida al generar la semana). */

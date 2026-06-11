@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../services/api';
 import { Banknote, Eye, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -13,6 +13,16 @@ import {
   formatTotalPagadoList,
   type AlquilerVentaListItem,
 } from '../../utils/miautoAlquilerVentaList';
+
+type AlquilerVentaSearchState = {
+  fromDetail?: boolean;
+  country?: string;
+  driverSearchInput?: string;
+  cronogramaId?: string;
+  cuotaEstado?: string;
+  page?: number;
+  pageSize?: number;
+};
 
 const COUNTRY_OPTIONS = [
   { value: '', label: 'Todos' },
@@ -66,17 +76,25 @@ function alquilerVentaMatchesQuery(row: AlquilerVentaListItem, rawQuery: string)
 
 export default function YegoMiAutoLoans() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
+  const returnConsumedRef = useRef(false);
+
+  const searchState = location.state as AlquilerVentaSearchState | null;
+  const isReturnFromDetail = Boolean(searchState?.fromDetail);
+
   const [sourceItems, setSourceItems] = useState<AlquilerVentaListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [country, setCountry] = useState((user?.country as string) || '');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [driverSearchInput, setDriverSearchInput] = useState('');
+  const [country, setCountry] = useState(
+    isReturnFromDetail ? (searchState?.country ?? ((user?.country as string) || '')) : ((user?.country as string) || '')
+  );
+  const [page, setPage] = useState(isReturnFromDetail && searchState?.page != null ? searchState.page : 1);
+  const [pageSize, setPageSize] = useState(isReturnFromDetail && searchState?.pageSize != null ? searchState.pageSize : 20);
+  const [driverSearchInput, setDriverSearchInput] = useState(isReturnFromDetail ? (searchState?.driverSearchInput ?? '') : '');
   const debouncedSearch = useDebouncedValue(driverSearchInput, 400);
-  const [cronogramaId, setCronogramaId] = useState('');
-  const [cuotaEstado, setCuotaEstado] = useState('');
+  const [cronogramaId, setCronogramaId] = useState(isReturnFromDetail ? (searchState?.cronogramaId ?? '') : '');
+  const [cuotaEstado, setCuotaEstado] = useState(isReturnFromDetail ? (searchState?.cuotaEstado ?? '') : '');
   const [cronogramas, setCronogramas] = useState<{ id: string; name: string }[]>([]);
 
   const filteredItems = useMemo(() => {
@@ -98,7 +116,13 @@ export default function YegoMiAutoLoans() {
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, pageClamped, pageSize]);
 
+  const isFirstRender = useRef(true);
+
   useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      if (isReturnFromDetail) return;
+    }
     setCronogramaId('');
     setCuotaEstado('');
   }, [country]);
@@ -168,9 +192,14 @@ export default function YegoMiAutoLoans() {
 
   useEffect(() => {
     const ac = new AbortController();
+    const st = location.state as AlquilerVentaSearchState | null;
+    if (!returnConsumedRef.current && Boolean(st?.fromDetail)) {
+      returnConsumedRef.current = true;
+      navigate(location.pathname, { replace: true, state: {} });
+    }
     fetchAlquilerVentaAllPages(ac.signal);
     return () => ac.abort();
-  }, [fetchAlquilerVentaAllPages]);
+  }, [fetchAlquilerVentaAllPages, navigate, location.pathname]);
 
   const goToPage = useCallback(
     (p: number) => {
@@ -363,7 +392,7 @@ export default function YegoMiAutoLoans() {
                     <td className="px-4 py-3">
                       <button
                         type="button"
-                        onClick={() => navigate(`/admin/yego-mi-auto/rent-sale/${row.id}`, { state: { driver_name: row.driver_name } })}
+                        onClick={() => navigate(`/admin/yego-mi-auto/rent-sale/${row.id}`, { state: { fromList: true, driver_name: row.driver_name, country, driverSearchInput, cronogramaId, cuotaEstado, page: pageClamped, pageSize } })}
                         className="inline-flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-[#8B1A1A] hover:bg-red-50 rounded-lg"
                       >
                         <Eye className="w-4 h-4" />
