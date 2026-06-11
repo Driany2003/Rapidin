@@ -132,11 +132,14 @@ export function miautoCobroPorIngresosTributoDisplay(c: {
 }
 
 /** Columna «Cobro saldo»: siempre magnitud positiva en UI (en BD puede guardarse negativo por la cascada). */
-export function miautoCobroSaldoDisplay(c: { cobro_saldo?: unknown; cobro_desde_saldo_conductor?: unknown; paid_amount?: unknown }): number {
+export function miautoCobroSaldoDisplay(c: { cobro_saldo?: unknown; cobro_desde_saldo_conductor?: unknown; cobro_saldo_referencia?: { cuota_semanal_id?: string; semana?: number; week_start_date?: string; monto: number }[]; paid_amount?: unknown; id?: string }): number {
   const cobroDesde = miautoNum(c.cobro_desde_saldo_conductor);
-  const pagado = miautoNum(c.paid_amount);
-  // Si el cobro fue a otra cuota, mostrar 0; si se aplicó aquí, mostrar el valor
-  if (cobroDesde > 0.005 && pagado <= 0.005) return 0;
+  const refs = c.cobro_saldo_referencia || [];
+  if (cobroDesde > 0.005 && refs.length > 0) {
+    const aOtras = refs.reduce((s, r) => (r.cuota_semanal_id !== c.id ? s + miautoNum(r.monto) : s), 0);
+    return cobroDesde - aOtras;
+  }
+  if (cobroDesde > 0.005 && miautoNum(c.paid_amount) <= 0.005) return 0;
   return Math.abs(cobroDesde || miautoNum(c.cobro_saldo));
 }
 

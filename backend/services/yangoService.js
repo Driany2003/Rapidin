@@ -418,6 +418,42 @@ export async function searchFleetContractor(queryText, cookieOverride = null) {
  * Obtiene el perfil de un contractor desde Yango Fleet.
  * GET /api/fleet/contractor-profiles-manager/v1/contractor-profile/contractor-data
  */
+/**
+ * Busca contractors en Yango Fleet y retorna datos completos incluyendo vehículo.
+ * POST /api/fleet/contractor-profiles-manager/v1/suggestions/list
+ */
+export async function searchFleetContractorFull(queryText, cookieOverride = null) {
+  const text = String(queryText || '').trim();
+  if (!text) return { success: false, error: 'query vacío' };
+  const cookie = cookieOverride || fleetCookieCobroForMiAuto();
+  if (!cookie) return { success: false, error: 'cookie de Fleet no configurada' };
+  const url = `${fleetBaseUrl()}/api/fleet/contractor-profiles-manager/v1/suggestions/list`;
+  const body = { query: { text } };
+  const headers = { 'Content-Type': 'application/json', 'Accept-Language': 'es-ES,es', Cookie: cookie, 'X-Park-Id': fleetParkIdForMiAuto() };
+  try {
+    const res = await axios.post(url, body, { headers, timeout: 15000 });
+    const suggestions = res.data?.suggestions;
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      return { success: true, suggestions: [] };
+    }
+    const list = suggestions.map((s) => ({
+      contractor_id: s.contractor?.contractor_id || '',
+      name: { first: s.contractor?.name?.first || '', last: s.contractor?.name?.last || '' },
+      phone: s.contractor?.phone || '',
+      balance: s.contractor?.balance || '0',
+      vehicle: s.vehicle ? {
+        brand: s.vehicle.brand || '',
+        model: s.vehicle.model || '',
+        year: s.vehicle.year || null,
+        plate: s.vehicle.number || '',
+      } : null,
+    }));
+    return { success: true, suggestions: list };
+  } catch (error) {
+    return { success: false, error: error.response?.status ? `HTTP ${error.response.status}` : (error.message || 'error de red') };
+  }
+}
+
 export async function getContractorProfile(contractorId) {
   const id = String(contractorId || '').trim();
   if (!id) return { success: false, error: 'contractor_id vacío' };

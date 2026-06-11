@@ -32,6 +32,8 @@ export interface CronogramaRule {
   cuotas_por_vehiculo: number[];
   /** Moneda de cada cuota por carro: USD ($) o PEN (S/.) */
   cuota_moneda_por_vehiculo?: BonoAutoMoneda[];
+  pct_comision?: number;
+  cobro_saldo?: number;
 }
 
 export type GastoRequisitoMoneda = 'USD' | 'PEN';

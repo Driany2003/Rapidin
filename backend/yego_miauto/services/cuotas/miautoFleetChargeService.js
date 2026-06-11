@@ -599,20 +599,38 @@ export async function processCobroCuota(
   );
   await touchFechaUltimoAbonoCuota(cuotaRow.id, paid, newPaid);
 
-  // Acumular cobro_desde_saldo_conductor en la cuota más reciente (origen visual)
+  // Guardar referencia del cobro Fleet en la cuota más reciente (solo si es otra cuota)
   if (!dryRun && creditCuotaMoneda > 0.005) {
-    await query(
-      `UPDATE module_miauto_cuota_semanal SET
-         cobro_desde_saldo_conductor = ROUND((COALESCE(cobro_desde_saldo_conductor, 0) + $1::numeric)::numeric, 2),
-         updated_at = CURRENT_TIMESTAMP
-       WHERE solicitud_id = $2::uuid
-         AND id = (
-           SELECT id FROM module_miauto_cuota_semanal
-           WHERE solicitud_id = $2::uuid AND deleted_at IS NULL
-           ORDER BY week_start_date DESC LIMIT 1
-         )`,
-      [creditCuotaMoneda, cuotaRow.solicitud_id]
+    const wsDest = ymdFromDbDate(cuotaRow.week_start_date);
+    const refDestino = { cuota_semanal_id: cuotaRow.id, week_start_date: wsDest, monto: creditCuotaMoneda };
+    const ultRes = await query(
+      `SELECT id FROM module_miauto_cuota_semanal
+       WHERE solicitud_id = $1::uuid AND deleted_at IS NULL
+       ORDER BY week_start_date DESC LIMIT 1`,
+      [cuotaRow.solicitud_id]
     );
+    const ultId = ultRes.rows?.[0]?.id;
+    if (ultId && String(ultId) !== String(cuotaRow.id)) {
+      await query(
+        `UPDATE module_miauto_cuota_semanal SET
+           cobro_desde_saldo_conductor = ROUND((COALESCE(cobro_desde_saldo_conductor, 0) + $1::numeric)::numeric, 2),
+           cobro_saldo_referencia = CASE
+             WHEN cobro_saldo_referencia IS NULL THEN $3::jsonb
+             ELSE cobro_saldo_referencia || $3::jsonb
+           END,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2::uuid`,
+        [creditCuotaMoneda, ultId, JSON.stringify([refDestino])]
+      );
+    } else {
+      await query(
+        `UPDATE module_miauto_cuota_semanal SET
+           cobro_desde_saldo_conductor = ROUND((COALESCE(cobro_desde_saldo_conductor, 0) + $1::numeric)::numeric, 2),
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2::uuid`,
+        [creditCuotaMoneda, ultId]
+      );
+    }
   }
 
   await appendMiautoFleetCobroAuditLog({

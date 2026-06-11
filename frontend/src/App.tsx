@@ -40,6 +40,7 @@ import YegoMiAutoLoans from './pages/yegoMiAuto/YegoMiAutoLoans';
 import YegoMiAutoRentSaleDetail from './pages/yegoMiAuto/YegoMiAutoRentSaleDetail';
 import YegoMiAutoSolicitudes from './pages/yegoMiAuto/YegoMiAutoSolicitudes';
 import YegoMiAutoSolicitudDetail from './pages/yegoMiAuto/YegoMiAutoSolicitudDetail';
+import YegoMiAutoNuevaSolicitud from './pages/yegoMiAuto/YegoMiAutoNuevaSolicitud';
 import YegoMiMotoDashboard from './pages/yegoMiMoto/YegoMiMotoDashboard';
 import YegoMiMotoFlotas from './pages/yegoMiMoto/YegoMiMotoFlotas';
 import YegoMiMotoConfig from './pages/yegoMiMoto/YegoMiMotoConfig';
@@ -254,6 +255,7 @@ function App() {
             />
             {/* Yego mi auto (mismo Layout, menú distinto según ruta) */}
             <Route path="/admin/yego-mi-auto" element={<Navigate to="/admin/yego-mi-auto/requests" replace />} />
+            <Route path="/admin/yego-mi-auto/nueva-solicitud" element={<ProtectedRoute><Layout><YegoMiAutoNuevaSolicitud /></Layout></ProtectedRoute>} />
             <Route path="/admin/yego-mi-auto/flotas" element={<ProtectedRoute><Layout><YegoMiAutoFlotas /></Layout></ProtectedRoute>} />
             <Route path="/admin/yego-mi-auto/requests" element={<ProtectedRoute><Layout><YegoMiAutoSolicitudes /></Layout></ProtectedRoute>} />
             <Route path="/admin/yego-mi-auto/requests/:id" element={<ProtectedRoute><Layout><YegoMiAutoSolicitudDetail /></Layout></ProtectedRoute>} />

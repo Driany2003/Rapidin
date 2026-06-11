@@ -90,11 +90,12 @@ router.post('/cronogramas', async (req, res) => {
 // PUT /api/miauto/cronogramas/:id
 router.put('/cronogramas/:id', validateUUID, async (req, res) => {
   try {
-    const cronograma = await updateCronograma(req.params.id, req.body);
-    if (!cronograma) return errorResponse(res, 'Cronograma no encontrado', 404);
+    const result = await updateCronograma(req.params.id, req.body);
+    if (!result) return errorResponse(res, 'Cronograma no encontrado', 404);
+    const { cronograma, skippedVehicles } = result;
     invalidateCronogramasListCache();
     auditMiautoMutation('cronograma.updated', 'cronograma', req.params.id);
-    return successResponse(res, cronograma, 'Cronograma actualizado');
+    return successResponse(res, { ...cronograma, skippedVehicles }, 'Cronograma actualizado');
   } catch (error) {
     logger.error('Error actualizando cronograma Mi Auto:', error);
     return errorResponse(res, error.message || 'Error al actualizar cronograma', 400);

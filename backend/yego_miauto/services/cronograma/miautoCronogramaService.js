@@ -394,6 +394,8 @@ export async function listCronogramas(filters = {}) {
       bono_auto_moneda: r.bono_auto_moneda || 'PEN',
       cuotas_por_vehiculo: Array.isArray(r.cuotas_por_vehiculo) ? r.cuotas_por_vehiculo : [],
       cuota_moneda_por_vehiculo: Array.isArray(r.cuota_moneda_por_vehiculo) ? r.cuota_moneda_por_vehiculo : [],
+      pct_comision: r.pct_comision != null ? parseFloat(r.pct_comision) : 0,
+      cobro_saldo: r.cobro_saldo != null ? parseFloat(r.cobro_saldo) : 0,
     });
   }
 
@@ -419,11 +421,11 @@ export async function getCronogramaById(id) {
   if (res.rows.length === 0) return null;
   const row = res.rows[0];
   const vehicles = await query(
-    'SELECT id, name, inicial, inicial_moneda, cuotas_semanales, image, orden FROM module_miauto_cronograma_vehiculo WHERE cronograma_id = $1 ORDER BY orden, created_at',
+     'SELECT id, name, inicial, inicial_moneda, cuotas_semanales, image, orden, requisitos_gastos FROM module_miauto_cronograma_vehiculo WHERE cronograma_id = $1 ORDER BY orden, created_at',
     [id]
   );
   const rules = await query(
-    'SELECT id, viajes, bono_auto, bono_auto_moneda, cuotas_por_vehiculo, cuota_moneda_por_vehiculo, orden, pct_comision FROM module_miauto_cronograma_rule WHERE cronograma_id = $1 ORDER BY orden, created_at',
+     'SELECT id, viajes, bono_auto, bono_auto_moneda, cuotas_por_vehiculo, cuota_moneda_por_vehiculo, orden, pct_comision, cobro_saldo FROM module_miauto_cronograma_rule WHERE cronograma_id = $1 ORDER BY orden, created_at',
     [id]
   );
   return {
@@ -690,11 +692,13 @@ export async function updateCronograma(id, data) {
     }
   }
   // Eliminar vehículos que ya no están en la lista y que NO tienen solicitudes activas
+  const skippedVehicles = [];
   for (const oldId of existingIds) {
     if (!keptIds.has(oldId)) {
       const solCount = await query('SELECT COUNT(*)::int AS n FROM module_miauto_solicitud WHERE cronograma_vehiculo_id = $1 AND deleted_at IS NULL', [oldId]);
       if (parseInt(solCount.rows[0]?.n) > 0) {
         // No eliminar: hay solicitudes activas que dependen de este vehículo
+        skippedVehicles.push({ id: oldId, motivo: `Tiene ${solCount.rows[0].n} solicitudes activas` });
         continue;
       }
       await query('DELETE FROM module_miauto_cronograma_vehiculo WHERE id = $1', [oldId]);
@@ -732,7 +736,7 @@ export async function updateCronograma(id, data) {
     }
   }
 
-  return getCronogramaById(id);
+  return { cronograma: await getCronogramaById(id), skippedVehicles: skippedVehicles.length > 0 ? skippedVehicles : undefined };
 }
 
 export async function deleteCronograma(id) {

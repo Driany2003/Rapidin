@@ -1005,8 +1005,8 @@ export default function YegoMiAutoRentSaleDetail() {
                   const moraPagada = Math.min(pagadoVal, moraOriginal);
                   const cuotaPagada = Math.max(0, pagadoVal - moraPagada);
                   // Lo que queda por pagar
-                  const cuotaAPagarNeta = cuotaOriginal - cuotaPagada;
-                  const moraPendiente = moraOriginal - moraPagada;
+                  const cuotaAPagarNeta = c.status === 'paid' || c.status === 'bonificada' ? 0 : (cuotaOriginal - cuotaPagada);
+                  const moraPendiente = c.status === 'paid' || c.status === 'bonificada' ? 0 : (moraOriginal - moraPagada);
                   // Saldo a favor
                   const saldoFavor = miautoNum(c.saldo_favor_conductor);
                   // Pendiente total
@@ -1077,9 +1077,7 @@ export default function YegoMiAutoRentSaleDetail() {
                         {/* Mostrar distribución del cobro fleet */}
                         {(() => {
                           const cobroFleetVal = miautoNum(c.cobro_desde_saldo_conductor);
-                          const pagadoVal = miautoNum(c.paid_amount);
                           if (cobroFleetVal <= 0.005) return null;
-                          if (pagadoVal > 0.005) return null;
                           if (c.cobro_saldo_referencia && c.cobro_saldo_referencia.length > 0) return null;
                           // El cobro se distribuyó → buscar semanas que recibieron el pago
                           const destinos: { semana: number; monto: number }[] = [];

@@ -647,7 +647,7 @@ export async function getActiveSolicitudInfo(phone, driverCountry, rapidinDriver
   return { status: row.status, park_id: row.park_id || null };
 }
 
-export const createSolicitud = async (data) => {
+export const createSolicitud = async (data, userId = null) => {
   const { country, dni, phone, email, license_number, description, apps = [], driver_id_fleet } = data;
   let rapidinDriverIdVal = trimOrUndefined(driver_id_fleet) ?? null;
   if (!rapidinDriverIdVal && dni) {
@@ -659,10 +659,10 @@ export const createSolicitud = async (data) => {
 
   const appsArr = normalizeAppsToCodes(apps);
   const result = await query(
-    `INSERT INTO module_miauto_solicitud (country, dni, phone, email, license_number, description, apps_trabajadas, driver_id_fleet)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+    `INSERT INTO module_miauto_solicitud (country, dni, phone, email, license_number, description, apps_trabajadas, driver_id_fleet, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
      RETURNING *`,
-    [country || 'PE', dni || null, phone || null, email || null, license_number || null, description || null, JSON.stringify(appsArr), rapidinDriverIdVal]
+    [country || 'PE', dni || null, phone || null, email || null, license_number || null, description || null, JSON.stringify(appsArr), rapidinDriverIdVal, userId]
   );
   return getSolicitudById(result.rows[0].id);
 };

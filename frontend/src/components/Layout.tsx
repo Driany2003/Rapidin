@@ -46,7 +46,8 @@ const ADMIN_MENU: Record<AdminProduct, { newRequest?: MenuItem; sections: MenuSe
     subtitle: 'Yego mi auto',
     dashboardPath: '/admin/yego-mi-auto/requests',
     sections: [
-      { title: 'Operación', items: [
+      { title: 'Operacion', items: [
+        { text: 'Nueva Solicitud', icon: PlusCircle, path: '/admin/yego-mi-auto/nueva-solicitud' },
         { text: 'Solicitudes', icon: FileText, path: '/admin/yego-mi-auto/requests' },
         { text: 'Alquiler / Venta', icon: Banknote, path: '/admin/yego-mi-auto/rent-sale' },
         { text: 'Pagos', icon: CreditCard, path: '/admin/yego-mi-auto/payments' },

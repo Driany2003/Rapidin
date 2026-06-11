@@ -426,7 +426,7 @@ function AsignacionActual({
       <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Comprobantes subidos por el conductor</p>
-          {(onAgregarComprobante || onAgregarPagoManual) && solicitud.pago_estado !== 'completo' && !solicitud.fecha_inicio_cobro_semanal && (
+          {(onAgregarComprobante || onAgregarPagoManual) && solicitud.pago_estado !== 'completo' && (
             <button
               type="button"
               onClick={() => {

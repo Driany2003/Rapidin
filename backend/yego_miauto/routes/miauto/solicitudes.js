@@ -16,6 +16,7 @@ import {
   getActiveSolicitudInfo,
 } from '../../services/solicitud/miautoSolicitudService.js';
 import { getPartnerNameById } from '../../../services/partnersService.js';
+import { searchFleetContractorFull } from '../../../services/yangoService.js';
 import pool from '../../../database/connection.js';
 
 const router = Router();
@@ -140,6 +141,20 @@ router.get('/active-blocking', async (req, res) => {
   }
 });
 
+// GET /api/miauto/yango/contractor-suggestions
+router.get('/yango/contractor-suggestions', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) return successResponse(res, { suggestions: [] });
+    const result = await searchFleetContractorFull(q);
+    if (!result.success) return errorResponse(res, result.error || 'Sin resultados', 404);
+    return successResponse(res, { suggestions: result.suggestions });
+  } catch (error) {
+    logger.error('Error buscando contractor en Yango:', error);
+    return errorResponse(res, error.message || 'Error al buscar conductor', 500);
+  }
+});
+
 // POST /api/miauto/solicitudes
 router.post('/solicitudes', async (req, res) => {
   try {
@@ -155,7 +170,19 @@ router.post('/solicitudes', async (req, res) => {
       description,
       apps: getAppsFromBody(req.body),
       driver_id_fleet,
-    });
+    }, req.user?.id);
+    const config = {};
+    if (req.body.cronograma_id) config.cronograma_id = trimOrUndefined(req.body.cronograma_id) || null;
+    if (req.body.cronograma_vehiculo_id) config.cronograma_vehiculo_id = trimOrUndefined(req.body.cronograma_vehiculo_id) || null;
+    if (req.body.placa_asignada) config.placa_asignada = String(req.body.placa_asignada).trim();
+    if (req.body.fecha_inicio_cobro_semanal) config.fecha_inicio_cobro_semanal = String(req.body.fecha_inicio_cobro_semanal).trim().slice(0, 10);
+    if (req.body.pago_tipo) config.pago_tipo = String(req.body.pago_tipo).trim();
+    if (req.body.pago_estado) config.pago_estado = String(req.body.pago_estado).trim();
+    if (req.body.status) config.status = String(req.body.status).trim();
+    if (req.body.apps) config.apps = getAppsFromBody(req.body);
+    if (Object.keys(config).length > 0) {
+      await updateSolicitud(solicitud.id, config, req.user?.id);
+    }
     auditMiautoMutation('solicitud.created', 'solicitud', solicitud?.id, { country, dni });
     return successResponse(res, solicitud, 'Solicitud creada', 201);
   } catch (error) {

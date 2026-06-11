@@ -799,7 +799,10 @@ export function paidIgualProgramadaIgnoraMoraDerivada(r, cuota_semanal, bono_aut
   const sched = round2(
     resolvedAmountDueSchedForOpenRow(r, cuota_semanal, bono_auto, pct_comision, cobro_saldo, isPrimera)
   );
-  return sched > 0.005 && Math.abs(paid - sched) <= 0.005;
+  if (sched > 0.005 && Math.abs(paid - sched) <= 0.005) return true;
+  const lateFeeDb = round2(parseFloat(r.late_fee) || 0);
+  const totalDue = round2(sched + lateFeeDb);
+  return totalDue > 0.005 && paid >= totalDue - 0.005;
 }
 
 /** Base `amount_due` efectiva para cola Fleet / pendiente (alinea API y retiro con cuota neta si hay PF en cascada). */
@@ -882,8 +885,11 @@ function amountDueAndLateForOpenSinglePhase(
   );
   const paid = round2(parseFloat(paidPhase) || 0);
   const lateFeeDb = round2(parseFloat(r.late_fee) || 0);
+  const fechaPago = ymdFromDbDate(r.fecha_ultimo_abono);
+  const dueYmdStored = ymdFromDbDate(r.due_date) || r.due_date;
+  const pagoATiempo = fechaPago && dueYmdStored && fechaPago <= dueYmdStored;
 
-  if (paid > 0.005 && lateFeeDb > 0.005) {
+  if (paid > 0.005 && lateFeeDb > 0.005 && !pagoATiempo) {
     const abonoMora = round2(Math.min(paid, lateFeeDb));
     const abonoCuota = round2(Math.max(0, paid - abonoMora));
     return {
@@ -921,11 +927,14 @@ function amountDueAndLateForOpenSinglePhase(
   let late_fee_remaining;
   let amount_due_remaining;
 
-  if (mora_full > 0.005) {
+  if (mora_full > 0.005 && !pagoATiempo) {
     const abonoMora = round2(Math.min(paid, mora_full));
     const abonoCuota = round2(Math.max(0, paid - abonoMora));
     late_fee_remaining = round2(Math.max(0, mora_full - abonoMora));
     amount_due_remaining = round2(Math.max(0, amount_due_sched - abonoCuota));
+  } else if (mora_full > 0.005 && pagoATiempo) {
+    late_fee_remaining = round2(mora_full);
+    amount_due_remaining = round2(Math.max(0, amount_due_sched - paid));
   } else {
     late_fee_remaining = round2(0);
     amount_due_remaining = round2(Math.max(0, amount_due_sched - paid));
@@ -1440,8 +1449,13 @@ export async function updateMoraDiaria(solicitudId = null, options = {}) {
      * a abiertas (cobro Fleet, `processCobroCuota`, etc.).
      */
     let lateFeePersist = lateFeeOut;
+    const fechaPagoRow = ymdFromDbDate(row.fecha_ultimo_abono);
+    const dueYmdRow = ymdFromDbDate(row.due_date);
+    const pagoATiempoRow = fechaPagoRow && dueYmdRow && fechaPagoRow <= dueYmdRow && paidDb > 0.005;
     if (!freezeMoraPorComprobante && stRow !== 'bonificada') {
-      lateFeePersist = round2(Math.max(lateFeeDb, lateFeeOut, moraFullD, moraSchedD));
+      lateFeePersist = pagoATiempoRow
+        ? round2(Math.max(lateFeeDb, lateFeeOut))
+        : round2(Math.max(lateFeeDb, lateFeeOut, moraFullD, moraSchedD));
     }
     if (freezeMoraPorComprobante) {
       lateFeePersist = lateFeeDb;
@@ -2129,8 +2143,7 @@ function buildCuotaSemanalApiRow(r, cronograma, vehId, options = {}) {
   // Si el paid_amount cubre el amount_due almacenado, forzar status = 'paid' y usar valores almacenados
   if (round2(paid_amount) >= round2(parseFloat(r.amount_due) || 0) + round2(parseFloat(r.late_fee) || 0) - 0.005 && round2(paid_amount) > 0.005) {
     statusApi = 'paid';
-    // También usar amount_due almacenado para que WhatsApp no muestre falso pendiente
-    amountDueApi = round2(parseFloat(r.amount_due) || 0);
+    amountDueApi = 0;
     lateFeeApi = 0;
   }
   const yangoRawCol =
