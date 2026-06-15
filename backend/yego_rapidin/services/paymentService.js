@@ -492,7 +492,11 @@ export const getAutoPaymentLog = async (filters = {}) => {
   const total = countResult.rows[0]?.total ?? 0;
 
   const dataResult = await query(
-    `SELECT * FROM module_rapidin_auto_payment_log ${where}
+    `SELECT id, loan_id, installment_id, driver_id, external_driver_id,
+            driver_first_name, driver_last_name, flota,
+            amount_to_charge, amount_charged, installment_number,
+            status, reason, balance_at_attempt, payment_id, created_at
+     FROM module_rapidin_auto_payment_log ${where}
      ORDER BY created_at DESC
      LIMIT $${n} OFFSET $${n + 1}`,
     [...params, limit, offset]

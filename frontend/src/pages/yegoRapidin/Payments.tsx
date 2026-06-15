@@ -80,8 +80,6 @@ interface ScheduleInstallment {
   cumulative_late_fee?: number;
 }
 
-const API_PAGE_CHUNK = 100;
-
 function paymentMatches(p: Payment, q: string): boolean {
   return rapidinMatchParts(q, [
     p.loan_id,
@@ -140,7 +138,8 @@ const Payments = () => {
   const [rejectModal, setRejectModal] = useState<{ voucherId: string; reason: string } | null>(null);
   const [viewFileModal, setViewFileModal] = useState<{ url: string; type: string } | null>(null);
   const [comprobantesFilter, setComprobantesFilter] = useState<'pending' | 'rejected' | 'approved'>('pending');
-  const [sourcePayments, setSourcePayments] = useState<Payment[]>([]);
+  const [paymentsData, setPaymentsData] = useState<Payment[]>([]);
+  const [paymentsTotal, setPaymentsTotal] = useState(0);
   const [paymentFilters, setPaymentFilters] = useState({
     country: (user?.country as string) || 'PE',
     date_from: '',
@@ -171,7 +170,8 @@ const Payments = () => {
   const [loanPreviewFetched, setLoanPreviewFetched] = useState(false);
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
-  const [sourceAutoLog, setSourceAutoLog] = useState<AutoPaymentLogEntry[]>([]);
+  const [autoLogData, setAutoLogData] = useState<AutoPaymentLogEntry[]>([]);
+  const [autoLogTotal, setAutoLogTotal] = useState(0);
   const [autoLogLoading, setAutoLogLoading] = useState(false);
   const [autoLogFilters, setAutoLogFilters] = useState({ date_from: '', date_to: '', status: '' });
   const [autoLogSearchInput, setAutoLogSearchInput] = useState('');
@@ -181,14 +181,13 @@ const Payments = () => {
   const [loanSchedule, setLoanSchedule] = useState<ScheduleInstallment[]>([]);
   const [loanScheduleLoading, setLoanScheduleLoading] = useState(false);
 
-  const filteredPayments = useMemo(() => {
+  const displayPaymentsList = useMemo(() => {
     const q = debouncedPaymentSearch.trim();
-    if (!q) return sourcePayments;
-    return sourcePayments.filter((p) => paymentMatches(p, q));
-  }, [sourcePayments, debouncedPaymentSearch]);
+    if (!q) return paymentsData;
+    return paymentsData.filter((p) => paymentMatches(p, q));
+  }, [paymentsData, debouncedPaymentSearch]);
 
-  const totalPaymentsFiltered = filteredPayments.length;
-  const paymentsTotalPages = Math.max(1, Math.ceil(totalPaymentsFiltered / pagination.limit) || 1);
+  const paymentsTotalPages = Math.max(1, Math.ceil(paymentsTotal / pagination.limit) || 1);
   const paymentsPageClamped = Math.min(Math.max(1, pagination.page), paymentsTotalPages);
 
   useEffect(() => {
@@ -197,63 +196,56 @@ const Payments = () => {
     }
   }, [pagination.page, paymentsPageClamped]);
 
-  const displayPaymentsList = useMemo(() => {
-    const start = (paymentsPageClamped - 1) * pagination.limit;
-    return filteredPayments.slice(start, start + pagination.limit);
-  }, [filteredPayments, paymentsPageClamped, pagination.limit]);
-
-  const fetchPaymentsAllPages = useCallback(
-    async (signal?: AbortSignal, resetPage = true) => {
+  const fetchPaymentsPage = useCallback(
+    async (pageNumber: number, signal?: AbortSignal) => {
       try {
         setLoading(true);
         setError('');
-        const accumulated: Payment[] = [];
-        let serverTotal = 0;
-        let apiPage = 1;
-        while (!signal?.aborted) {
-          const params = new URLSearchParams();
-          params.append('page', String(apiPage));
-          params.append('limit', String(API_PAGE_CHUNK));
-          if (paymentFilters.country) params.append('country', paymentFilters.country);
-          if (paymentFilters.date_from) params.append('date_from', paymentFilters.date_from);
-          if (paymentFilters.date_to) params.append('date_to', paymentFilters.date_to);
-          const response = await api.get(`/payments?${params.toString()}`, { signal });
-          let chunk: Payment[] = [];
-          const pag = response.data?.pagination;
-          serverTotal = typeof pag?.total === 'number' ? pag.total : accumulated.length;
-          const raw = response.data?.data ?? response.data;
-          if (Array.isArray(raw)) chunk = raw;
-          else if (Array.isArray(response.data)) chunk = response.data;
-          if (chunk.length === 0) break;
-          accumulated.push(...chunk);
-          if (accumulated.length >= serverTotal || chunk.length < API_PAGE_CHUNK) break;
-          apiPage += 1;
-        }
+        const params = new URLSearchParams();
+        params.append('page', String(pageNumber));
+        params.append('limit', String(pagination.limit));
+        if (paymentFilters.country) params.append('country', paymentFilters.country);
+        if (paymentFilters.date_from) params.append('date_from', paymentFilters.date_from);
+        if (paymentFilters.date_to) params.append('date_to', paymentFilters.date_to);
+        const response = await api.get(`/payments?${params.toString()}`, { signal });
+        let chunk: Payment[] = [];
+        const pag = response.data?.pagination;
+        const total = typeof pag?.total === 'number' ? pag.total : 0;
+        const raw = response.data?.data ?? response.data;
+        if (Array.isArray(raw)) chunk = raw;
+        else if (Array.isArray(response.data)) chunk = response.data;
         if (signal?.aborted) return;
-        setSourcePayments(accumulated);
-        if (resetPage) setPagination((p) => ({ ...p, page: 1 }));
+        setPaymentsData(chunk);
+        setPaymentsTotal(total);
       } catch (err: any) {
         if (isAxiosAbortError(err)) return;
         console.error('Error fetching payments:', err);
         setError(err.response?.data?.message || 'Error al cargar los pagos');
-        setSourcePayments([]);
+        setPaymentsData([]);
+        setPaymentsTotal(0);
       } finally {
         if (signal?.aborted) return;
         setLoading(false);
       }
     },
-    [paymentFilters.country, paymentFilters.date_from, paymentFilters.date_to]
+    [paymentFilters.country, paymentFilters.date_from, paymentFilters.date_to, pagination.limit]
   );
 
   useEffect(() => {
     if (tab !== 'pagos') return;
     const ac = new AbortController();
-    fetchPaymentsAllPages(ac.signal, true);
+    if (pagination.page > 0) {
+      fetchPaymentsPage(pagination.page, ac.signal);
+    }
     return () => ac.abort();
-  }, [tab, fetchPaymentsAllPages]);
+  }, [tab, pagination.page, fetchPaymentsPage]);
+
+  useEffect(() => {
+    setPagination((p) => ({ ...p, page: 1 }));
+  }, [paymentFilters.date_from, paymentFilters.date_to, paymentFilters.country]);
 
   const goToPaymentsPage = (page: number) => {
-    const tp = Math.max(1, Math.ceil(totalPaymentsFiltered / pagination.limit) || 1);
+    const tp = Math.max(1, paymentsTotalPages);
     setPagination((p) => ({ ...p, page: Math.max(1, Math.min(page, tp)) }));
   };
 
@@ -343,60 +335,55 @@ const Payments = () => {
     if (tab === 'comprobantes') fetchVouchers();
   }, [tab, comprobantesFilter]);
 
-  const fetchAutoLogAllPages = useCallback(
-    async (signal?: AbortSignal, resetPage = true) => {
+  const fetchAutoLogPage = useCallback(
+    async (pageNumber: number, signal?: AbortSignal) => {
       try {
         setAutoLogLoading(true);
-        const accumulated: AutoPaymentLogEntry[] = [];
-        let serverTotal = 0;
-        let apiPage = 1;
-        while (!signal?.aborted) {
-          const params = new URLSearchParams();
-          params.append('page', String(apiPage));
-          params.append('limit', String(API_PAGE_CHUNK));
-          if (autoLogFilters.date_from) params.append('date_from', autoLogFilters.date_from);
-          if (autoLogFilters.date_to) params.append('date_to', autoLogFilters.date_to);
-          if (autoLogFilters.status) params.append('status', autoLogFilters.status);
-          const res = await api.get(`/payments/automatic-log?${params.toString()}`, { signal });
-          const data = res.data?.data ?? [];
-          const pag = res.data?.pagination;
-          serverTotal = typeof pag?.total === 'number' ? pag.total : accumulated.length;
-          const chunk = Array.isArray(data) ? data : [];
-          if (chunk.length === 0) break;
-          accumulated.push(...chunk);
-          if (accumulated.length >= serverTotal || chunk.length < API_PAGE_CHUNK) break;
-          apiPage += 1;
-        }
+        const params = new URLSearchParams();
+        params.append('page', String(pageNumber));
+        params.append('limit', String(autoLogPagination.limit));
+        if (autoLogFilters.date_from) params.append('date_from', autoLogFilters.date_from);
+        if (autoLogFilters.date_to) params.append('date_to', autoLogFilters.date_to);
+        if (autoLogFilters.status) params.append('status', autoLogFilters.status);
+        const res = await api.get(`/payments/automatic-log?${params.toString()}`, { signal });
+        const data = res.data?.data ?? [];
+        const pag = res.data?.pagination;
+        const total = typeof pag?.total === 'number' ? pag.total : 0;
         if (signal?.aborted) return;
-        setSourceAutoLog(accumulated);
-        if (resetPage) setAutoLogPagination((p) => ({ ...p, page: 1 }));
+        setAutoLogData(Array.isArray(data) ? data : []);
+        setAutoLogTotal(total);
       } catch (err) {
         if (isAxiosAbortError(err)) return;
         toast.error('Error al cargar log de pagos automáticos');
-        setSourceAutoLog([]);
+        setAutoLogData([]);
+        setAutoLogTotal(0);
       } finally {
-        if (signal?.aborted) return;
-        setAutoLogLoading(false);
+        if (!signal?.aborted) setAutoLogLoading(false);
       }
     },
-    [autoLogFilters.date_from, autoLogFilters.date_to, autoLogFilters.status]
+    [autoLogFilters.date_from, autoLogFilters.date_to, autoLogFilters.status, autoLogPagination.limit]
   );
 
   useEffect(() => {
     if (tab !== 'pagos-automaticos') return;
     const ac = new AbortController();
-    fetchAutoLogAllPages(ac.signal, true);
+    if (autoLogPagination.page > 0) {
+      fetchAutoLogPage(autoLogPagination.page, ac.signal);
+    }
     return () => ac.abort();
-  }, [tab, fetchAutoLogAllPages]);
+  }, [tab, autoLogPagination.page, fetchAutoLogPage]);
 
-  const filteredAutoLog = useMemo(() => {
+  useEffect(() => {
+    setAutoLogPagination((p) => ({ ...p, page: 1 }));
+  }, [autoLogFilters.date_from, autoLogFilters.date_to, autoLogFilters.status]);
+
+  const displayAutoLog = useMemo(() => {
     const q = debouncedAutoLogSearch.trim();
-    if (!q) return sourceAutoLog;
-    return sourceAutoLog.filter((row) => autoLogRowMatches(row, q));
-  }, [sourceAutoLog, debouncedAutoLogSearch]);
+    if (!q) return autoLogData;
+    return autoLogData.filter((row) => autoLogRowMatches(row, q));
+  }, [autoLogData, debouncedAutoLogSearch]);
 
-  const totalAutoFiltered = filteredAutoLog.length;
-  const autoLogTotalPages = Math.max(1, Math.ceil(totalAutoFiltered / autoLogPagination.limit) || 1);
+  const autoLogTotalPages = Math.max(1, Math.ceil(autoLogTotal / autoLogPagination.limit) || 1);
   const autoLogPageClamped = Math.min(Math.max(1, autoLogPagination.page), autoLogTotalPages);
 
   useEffect(() => {
@@ -405,19 +392,14 @@ const Payments = () => {
     }
   }, [autoLogPagination.page, autoLogPageClamped]);
 
-  const displayAutoLog = useMemo(() => {
-    const start = (autoLogPageClamped - 1) * autoLogPagination.limit;
-    return filteredAutoLog.slice(start, start + autoLogPagination.limit);
-  }, [filteredAutoLog, autoLogPageClamped, autoLogPagination.limit]);
-
   const clearPaymentSearch = () => {
     setPaymentSearchInput('');
     setLoanSchedule([]);
   };
 
   const resolvedLoanIdForSchedule = useMemo(
-    () => resolveScheduleLoanIdFromSearch(debouncedPaymentSearch, filteredPayments),
-    [debouncedPaymentSearch, filteredPayments]
+    () => resolveScheduleLoanIdFromSearch(debouncedPaymentSearch, paymentsData),
+    [debouncedPaymentSearch, paymentsData]
   );
 
   useEffect(() => {
@@ -494,7 +476,7 @@ const Payments = () => {
         reference: '',
       });
       setChargeLateFee(true);
-      fetchPaymentsAllPages(undefined, true);
+      fetchPaymentsPage(1);
     } catch (error: any) {
       console.error('Error registering payment:', error);
       toast.error(error.response?.data?.message || 'Error al registrar el pago');
@@ -517,7 +499,7 @@ const Payments = () => {
   const safeVouchers = Array.isArray(vouchers) ? vouchers : [];
   const pendingCount = tab === 'comprobantes' && comprobantesFilter === 'pending' ? safeVouchers.length : pendingVouchersCount;
 
-  if (loading && tab === 'pagos' && sourcePayments.length === 0) {
+  if (loading && tab === 'pagos' && paymentsData.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
@@ -537,7 +519,7 @@ const Payments = () => {
         <h3 className="text-xl font-bold text-gray-900 mb-2">Error al cargar los pagos</h3>
         <p className="text-gray-600 mb-6 text-center max-w-md">{error}</p>
         <button
-          onClick={() => fetchPaymentsAllPages(undefined, true)}
+          onClick={() => fetchPaymentsPage(1)}
           className="bg-gradient-to-r from-red-600 to-red-700 text-white px-6 py-3 rounded-lg font-medium hover:from-red-700 hover:to-red-800 transition-all shadow-md"
         >
           Reintentar
@@ -710,7 +692,7 @@ const Payments = () => {
       )}
 
       {/* Lista de pagos con paginación */}
-      {sourcePayments.length === 0 && !loading ? (
+      {paymentsData.length === 0 && !loading ? (
         <div className="bg-white rounded-xl shadow border border-gray-200 p-8 text-center">
           <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-bold text-gray-900 mb-2">
@@ -722,7 +704,7 @@ const Payments = () => {
               : 'No hay pagos en el periodo seleccionado.'}
           </p>
         </div>
-      ) : totalPaymentsFiltered === 0 ? (
+      ) : displayPaymentsList.length === 0 ? (
         <div className="bg-white rounded-xl shadow border border-gray-200 p-8 text-center">
           <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-bold text-gray-900 mb-2">Sin coincidencias</h3>
@@ -796,10 +778,10 @@ const Payments = () => {
               </tbody>
             </table>
           </div>
-          {totalPaymentsFiltered > 0 && (
+          {paymentsTotal > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200">
               <span className="text-xs text-gray-500">
-                Mostrando {displayPaymentsList.length} de {totalPaymentsFiltered}
+                Mostrando {displayPaymentsList.length} de {paymentsTotal}
               </span>
               <div className="flex items-center gap-1">
                 <button
@@ -1215,7 +1197,7 @@ const Payments = () => {
             </div>
             <button
               type="button"
-              onClick={() => fetchAutoLogAllPages(undefined, true)}
+              onClick={() => fetchAutoLogPage(1)}
               className="px-4 py-2 bg-[#8B1A1A] text-white rounded-lg hover:bg-[#6B1515] flex items-center gap-2"
             >
               <Search className="w-4 h-4" />
@@ -1227,13 +1209,13 @@ const Payments = () => {
           <div className="flex justify-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-2 border-red-600 border-t-transparent" />
           </div>
-        ) : sourceAutoLog.length === 0 ? (
+        ) : autoLogData.length === 0 && !debouncedAutoLogSearch.trim() ? (
           <div className="bg-white rounded-xl shadow border border-gray-200 p-8 text-center">
             <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-bold text-gray-900 mb-2">No hay registros</h3>
             <p className="text-gray-600 text-sm">Historial de intentos de cobro automático.</p>
           </div>
-        ) : totalAutoFiltered === 0 ? (
+        ) : displayAutoLog.length === 0 ? (
           <div className="bg-white rounded-xl shadow border border-gray-200 p-8 text-center">
             <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-bold text-gray-900 mb-2">Sin coincidencias</h3>
@@ -1295,10 +1277,10 @@ const Payments = () => {
                 </tbody>
               </table>
             </div>
-            {totalAutoFiltered > 0 && (
+            {autoLogTotal > 0 && (
               <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200">
                                <span className="text-xs text-gray-500">
-                  Mostrando {displayAutoLog.length} de {totalAutoFiltered}
+                  Mostrando {displayAutoLog.length} de {autoLogTotal}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
