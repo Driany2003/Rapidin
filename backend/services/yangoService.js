@@ -190,13 +190,45 @@ export async function addToContractor(id, amount, description, cookieOverride, p
   }
 }
 
-/** Consulta saldo del conductor. Por defecto usa cookie de cobro (job). cookieOverride opcional. */
+/** Consulta saldo del conductor (Mi Auto). Usa cookie y parque de Mi Auto. cookieOverride opcional. */
 export async function getContractorBalance(contractorProfileId, parkId = null, cookieOverride = null) {
   const id = String(contractorProfileId || '').trim();
   if (!id) return { success: false, error: 'external_driver_id vacío' };
   const url = `${fleetBaseUrl()}/api/fleet/contractor-profiles-manager/v1/contractor-balances/by-pro-id?contractor_profile_id=${encodeURIComponent(id)}`;
   const resolvedPark = fleetParkIdForMiAuto(parkId);
   const resolvedCookie = fleetCookieCobroForMiAuto(cookieOverride);
+  const headers = {
+    'Accept-Language': 'es-ES,es',
+    'Cookie': resolvedCookie,
+    'X-Park-Id': resolvedPark,
+    'Content-Type': 'application/json'
+  };
+  try {
+    const res = await postWithProxyRetry(url, {}, headers);
+    const contractors = res.data?.contractors || [];
+    const c = contractors.find(x => x?.contractor_profile_id === id) || contractors[0];
+    if (!c) return { success: false, error: 'Conductor no encontrado' };
+    const balance = parseFloat(c.balance);
+    return { success: true, balance: Number.isFinite(balance) ? balance : 0, full_name: c.full_name };
+  } catch (error) {
+    if (error.response) {
+      const st = error.response.status;
+      const raw = normalizeApiMessage(error.response.data);
+      const hint = fleetSessionRejectedMessage(st, raw);
+      if (hint) return { success: false, error: hint };
+      return { success: false, error: `Error ${st}` };
+    }
+    return { success: false, error: error.message };
+  }
+}
+
+/** Consulta saldo del conductor para Rapidin: usa parque del conductor (fallback YANGO_FLEET_PARK_ID) y cookie general de cobro (YANGO_FLEET_COOKIE_COBRO). Sin dependencia de Mi Auto. */
+export async function getContractorBalanceForRapidin(contractorProfileId, parkId = null, cookieOverride = null) {
+  const id = String(contractorProfileId || '').trim();
+  if (!id) return { success: false, error: 'external_driver_id vacío' };
+  const url = `${fleetBaseUrl()}/api/fleet/contractor-profiles-manager/v1/contractor-balances/by-pro-id?contractor_profile_id=${encodeURIComponent(id)}`;
+  const resolvedPark = parkId && String(parkId).trim() ? String(parkId).trim() : fleetParkId();
+  const resolvedCookie = cookieOverride && String(cookieOverride).trim() ? String(cookieOverride).trim() : fleetCookieCobro();
   const headers = {
     'Accept-Language': 'es-ES,es',
     'Cookie': resolvedCookie,

@@ -10,7 +10,7 @@
  */
 
 import { query } from '../../config/database.js';
-import { withdrawFromContractor, getContractorBalance } from '../../services/yangoService.js';
+import { withdrawFromContractor, getContractorBalanceForRapidin } from '../../services/yangoService.js';
 import { logger } from '../../utils/logger.js';
 
 /** Parques YEGO Cobranzas: se prueba en orden hasta que Fleet devuelve saldo para el conductor. */
@@ -50,7 +50,7 @@ function cobranzasYegoParkIds(options = {}) {
 async function fleetBalanceForDriverInParks(contractorProfileId, parkIds, cookie) {
   let lastErr = '';
   for (const pid of parkIds) {
-    const br = await getContractorBalance(contractorProfileId, pid, cookie);
+    const br = await getContractorBalanceForRapidin(contractorProfileId, pid, cookie);
     if (br.success) return { parkId: pid, balanceResult: br };
     lastErr = br.error || `Error en parque ${pid}`;
   }

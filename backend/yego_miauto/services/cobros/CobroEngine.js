@@ -366,9 +366,15 @@ export async function generateWeeklyCharge({
       cuotaSemanal,
       cobroSaldo,
     });
-    partnerFeesRawStored = partnerFeesRaw;
-    partnerFees83Stored = cuotaCalc.partnerFees83;
-    partnerFeesYangoStored = partnerFeesRaw > 0.005 ? partnerFeesRaw : null;
+    if (cascadaResult.remainingPool <= 0.005) {
+      partnerFeesRawStored = 0;
+      partnerFees83Stored = 0;
+      partnerFeesYangoStored = null;
+    } else {
+      partnerFeesRawStored = partnerFeesRaw;
+      partnerFees83Stored = cuotaCalc.partnerFees83;
+      partnerFeesYangoStored = partnerFeesRaw > 0.005 ? partnerFeesRaw : null;
+    }
     amountDueInsert = snap.amountDue;
     saldoFavorInsert = snap.saldoFavorConductor;
   } else {
