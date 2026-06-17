@@ -71,6 +71,11 @@ function defaultRequisitosGastosVehiculo() {
       moneda: 'PEN',
       cobro: { tipo: 'semanal', semanas: 26 },
     },
+    inicial_parcial: {
+      monto: 0,
+      moneda: 'USD',
+      cobro: { tipo: 'semanal', semanas: 26 },
+    },
   };
 }
 

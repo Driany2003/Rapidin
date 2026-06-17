@@ -205,7 +205,7 @@ async function ensureTiposFromRequisitos(solicitudId, tiposExistentes) {
       const dueDate = new Date(fi);
       dueDate.setDate(dueDate.getDate() + t.diasOffsetPorCuota(i));
       const dueStr = dueDate.toISOString().slice(0, 10);
-      const amountDue = Math.round(monto / numCuotas * 100) / 100;
+      const amountDue = Math.round(monto * 100) / 100;
 
       await query(
         `INSERT INTO module_miauto_otros_gastos (solicitud_id, tipo, week_index, due_date, amount_due, status, moneda)

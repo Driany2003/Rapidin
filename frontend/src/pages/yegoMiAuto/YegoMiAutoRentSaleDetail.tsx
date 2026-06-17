@@ -51,6 +51,26 @@ const TIPO_OTROS_GASTOS_LABELS: Record<string, string> = {
   generico: 'Otros Gastos',
 };
 
+const TIPO_OTROS_GASTOS_ACCENT: Record<string, string> = {
+  gps: 'border-l-blue-500',
+  src: 'border-l-amber-500',
+  soat: 'border-l-green-500',
+  impuesto_vehicular: 'border-l-orange-500',
+  todo_riesgo_mas_gps_agrupado: 'border-l-purple-500',
+  inicial_parcial: 'border-l-teal-500',
+  generico: 'border-l-gray-400',
+};
+
+const TIPO_OTROS_GASTOS_BAR: Record<string, string> = {
+  gps: 'bg-blue-500',
+  src: 'bg-amber-500',
+  soat: 'bg-green-500',
+  impuesto_vehicular: 'bg-orange-500',
+  todo_riesgo_mas_gps_agrupado: 'bg-purple-500',
+  inicial_parcial: 'bg-teal-500',
+  generico: 'bg-gray-400',
+};
+
 interface CuotaSemanal {
   id: string;
   week_start_date: string;
@@ -204,6 +224,7 @@ export default function YegoMiAutoRentSaleDetail() {
   const [racha, setRacha] = useState<number | null>(null);
   const [bonoAplicado, setBonoAplicado] = useState<number>(0);
   const [tabCronograma, setTabCronograma] = useState<'semanales' | 'otros_gastos'>('semanales');
+  const [otrosGastosFilter, setOtrosGastosFilter] = useState<'todos' | 'pending' | 'paid' | 'overdue'>('todos');
   const [subTabCuota, setSubTabCuota] = useState<Record<string, 'comprobantes' | 'evidencias'>>({});
   const [evidenciasFleet, setEvidenciasFleet] = useState<{ id: string; cuota_semanal_id: string; file_name: string; file_path: string; created_at: string }[]>([]);
   const [subiendoEvidenciaCuotaId, setSubiendoEvidenciaCuotaId] = useState<string | null>(null);
@@ -1751,87 +1772,162 @@ export default function YegoMiAutoRentSaleDetail() {
             {otrosGastosRows.length === 0 ? (
               <p className="text-sm text-gray-500 text-center py-8 px-4">No hay cuotas de otros gastos para este contrato.</p>
             ) : (
-              <div className="px-4 pb-3 pt-2 space-y-4">
-                {Object.entries(
-                  otrosGastosRows.reduce((acc, og) => {
-                    const t = og.tipo || 'generico';
-                    if (!acc[t]) acc[t] = [];
-                    acc[t].push(og);
-                    return acc;
-                  }, {} as Record<string, MiautoOtrosGastoRow[]>)
-                ).map(([tipo, cuotas]) => {
-                  const isOpen = otrosTiposAbiertos[tipo] !== false;
-                  const totalTipo = cuotas.reduce((s, c) => s + Number(c.amount_due), 0);
-                  const label = TIPO_OTROS_GASTOS_LABELS[tipo] || tipo;
-                  const moneda = cuotas[0]?.moneda || 'PEN';
-                  const sym = symMoneda(moneda);
-                  return (
-                    <div key={tipo} className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+              <div className="px-4 pb-3 pt-2">
+                {/* Resumen general */}
+                <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                  <span className="font-semibold text-gray-700">
+                    Total: {(() => {
+                      const syms = [...new Set(otrosGastosRows.map(og => symMoneda(og.moneda || 'PEN')))];
+                      if (syms.length === 1) {
+                        const total = otrosGastosRows.reduce((s, og) => s + Number(og.amount_due), 0);
+                        return `${syms[0]} ${total.toFixed(2)}`;
+                      }
+                      return otrosGastosRows.reduce((s, og) => s + Number(og.amount_due), 0).toFixed(2);
+                    })()}
+                  </span>
+                  <span className="text-gray-300">·</span>
+                  <span>{otrosGastosRows.length} cuotas</span>
+                  <span className="text-gray-300">·</span>
+                  <span className="text-green-600">{otrosGastosRows.filter(og => og.status === 'paid').length} pagadas</span>
+                  <span className="text-gray-300">·</span>
+                  <span className="text-amber-600">{otrosGastosRows.filter(og => og.status === 'pending').length} pendientes</span>
+                  <span className="text-gray-300">·</span>
+                  <span className="text-red-600">{otrosGastosRows.filter(og => og.status === 'overdue').length} vencidas</span>
+                </div>
+
+                {/* Filtros */}
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {(['todos', 'pending', 'paid', 'overdue'] as const).map((f) => {
+                    const filterLabels: Record<string, string> = { todos: 'Todos', pending: 'Pendientes', paid: 'Pagados', overdue: 'Vencidos' };
+                    const filterCounts: Record<string, number> = {
+                      todos: otrosGastosRows.length,
+                      pending: otrosGastosRows.filter(og => og.status === 'pending').length,
+                      paid: otrosGastosRows.filter(og => og.status === 'paid').length,
+                      overdue: otrosGastosRows.filter(og => og.status === 'overdue').length,
+                    };
+                    return (
                       <button
+                        key={f}
                         type="button"
-                        onClick={() => setOtrosTiposAbiertos(prev => ({ ...prev, [tipo]: prev[tipo] === false ? true : false }))}
-                        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                        onClick={() => setOtrosGastosFilter(prev => prev === f ? 'todos' : f)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+                          otrosGastosFilter === f
+                            ? 'bg-[#8B1A1A] text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
                       >
-                        <div className="flex items-center gap-2">
-                          {isOpen ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
-                          <span className="text-sm font-bold text-gray-900">{label}</span>
-                          <span className="text-xs text-gray-400">· {cuotas.length} cuotas · Total: {sym} {totalTipo.toFixed(2)}</span>
-                        </div>
+                        {filterLabels[f]} ({filterCounts[f]})
                       </button>
-                      {isOpen && (
-                        <div className="overflow-x-auto border-t border-gray-100">
-                          <table className="min-w-max text-sm">
-                            <thead>
-                              <tr className="bg-gray-50/80">
-                                <th className="sticky left-0 z-[1] bg-gray-50/95 px-4 py-2 text-left text-xs font-semibold text-gray-500 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] min-w-[90px] whitespace-nowrap">Monto · {sym}</th>
-                                {cuotas.map((og) => {
-                                  const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-                                  let shortDate = '—';
-                                  if (og.due_date) {
-                                    const parts = String(og.due_date).slice(0,10).split('-');
-                                    if (parts.length === 3) {
-                                      shortDate = parts[2] + '-' + months[parseInt(parts[1]) - 1];
-                                    }
-                                  }
-                                  return (
-                                    <th key={og.id} className="px-3 py-2 text-center text-[10px] font-medium text-gray-500 whitespace-nowrap">{shortDate}</th>
-                                  );
-                                })}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr>
-                                <td className="sticky left-0 z-[1] bg-white px-4 py-2 font-semibold text-gray-900 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] text-xs">
-                                  {(() => {
-                                    const allSame = cuotas.every(c => Math.abs(Number(c.amount_due) - Number(cuotas[0].amount_due)) < 0.01);
-                                    return allSame ? Number(cuotas[0].amount_due).toFixed(2) : '—';
-                                  })()}
-                                </td>
-                                {cuotas.map((og) => (
-                                  <td key={og.id} className="px-3 py-2 text-center">
-                                    <select
-                                      value={og.status}
-                                      onChange={(e) => handleOtroGastoStatusChange(og.id, e.target.value)}
-                                      className={`text-[11px] border rounded px-1.5 py-0.5 font-medium cursor-pointer ${
-                                        og.status === 'paid' ? 'bg-green-50 border-green-300 text-green-700' :
-                                        og.status === 'overdue' ? 'bg-red-50 border-red-300 text-red-600' :
-                                        'bg-gray-50 border-gray-300 text-gray-600'
-                                      }`}
-                                    >
-                                      <option value="pending">Pendiente</option>
-                                      <option value="paid">Pagado</option>
-                                      <option value="overdue">Vencido</option>
-                                    </select>
-                                  </td>
-                                ))}
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+
+                {/* Cards por categoría */}
+                <div className="space-y-4">
+                  {Object.entries(
+                    otrosGastosRows.reduce((acc, og) => {
+                      const t = og.tipo || 'generico';
+                      if (!acc[t]) acc[t] = [];
+                      acc[t].push(og);
+                      return acc;
+                    }, {} as Record<string, MiautoOtrosGastoRow[]>)
+                  ).map(([tipo, cuotas]) => {
+                    const filteredCuotas = otrosGastosFilter === 'todos'
+                      ? cuotas
+                      : cuotas.filter(c => c.status === otrosGastosFilter);
+                    if (filteredCuotas.length === 0) return null;
+
+                    const isOpen = otrosTiposAbiertos[tipo] !== false;
+                    const totalTipo = cuotas.reduce((s, c) => s + Number(c.amount_due), 0);
+                    const cuotasFiltroCount = filteredCuotas.length;
+                    const cuotasTotal = cuotas.length;
+                    const paidCount = cuotas.filter(c => c.status === 'paid').length;
+                    const pct = cuotasTotal > 0 ? Math.round((paidCount / cuotasTotal) * 100) : 0;
+                    const label = TIPO_OTROS_GASTOS_LABELS[tipo] || tipo;
+                    const moneda = cuotas[0]?.moneda || 'PEN';
+                    const sym = symMoneda(moneda);
+                    const accentBorder = TIPO_OTROS_GASTOS_ACCENT[tipo] || 'border-l-gray-400';
+                    const accentBar = TIPO_OTROS_GASTOS_BAR[tipo] || 'bg-gray-400';
+                    const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+
+                    const formatCuotaDate = (dueDate: string) => {
+                      if (!dueDate) return '—';
+                      const parts = String(dueDate).slice(0,10).split('-');
+                      if (parts.length === 3) return parts[2] + '-' + months[parseInt(parts[1]) - 1];
+                      return '—';
+                    };
+
+                    return (
+                      <div key={tipo} className={`rounded-xl border border-gray-200 overflow-hidden bg-white border-l-[3px] ${accentBorder}`}>
+
+                        {/* Header colapsable */}
+                        <button
+                          type="button"
+                          onClick={() => setOtrosTiposAbiertos(prev => ({ ...prev, [tipo]: prev[tipo] === false ? true : false }))}
+                          className="w-full flex items-center justify-between px-4 py-3 bg-gray-50/70 hover:bg-gray-100/80 transition-colors"
+                        >
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            {isOpen ? <ChevronDown className="w-4 h-4 text-gray-500 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-500 shrink-0" />}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-bold text-gray-900">{label}</span>
+                                <span className="text-[11px] text-gray-400">{cuotasFiltroCount}/{cuotasTotal} cuotas</span>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden max-w-[120px]">
+                                  <div className={`h-full rounded-full transition-all duration-300 ${accentBar}`} style={{ width: `${pct}%` }} />
+                                </div>
+                                <span className="text-[10px] text-gray-500">{paidCount}/{cuotasTotal} pagadas</span>
+                              </div>
+                            </div>
+                          </div>
+                          <span className="text-sm font-semibold text-gray-900 ml-3 shrink-0">{sym} {totalTipo.toFixed(2)}</span>
+                        </button>
+
+                        {isOpen && (
+                          <div className="border-t border-gray-100 px-3 py-3">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                              {filteredCuotas.map((og) => (
+                                <div
+                                  key={og.id}
+                                  className={`rounded-lg border p-2.5 flex flex-col items-center gap-1.5 ${
+                                    og.status === 'paid' ? 'bg-green-50/50 border-green-200' :
+                                    og.status === 'overdue' ? 'bg-red-50/50 border-red-200' :
+                                    'bg-white border-gray-200'
+                                  }`}
+                                >
+                                  <span className="text-[10px] text-gray-500 font-medium">
+                                    {formatCuotaDate(og.due_date)}
+                                  </span>
+                                  <span className={`text-xs font-bold ${
+                                    og.status === 'paid' ? 'text-green-700' :
+                                    og.status === 'overdue' ? 'text-red-700' :
+                                    'text-gray-900'
+                                  }`}>
+                                    {sym} {Number(og.amount_due).toFixed(2)}
+                                  </span>
+                                  <select
+                                    value={og.status}
+                                    onChange={(e) => handleOtroGastoStatusChange(og.id, e.target.value)}
+                                    className={`text-[10px] border rounded px-1.5 py-0.5 font-medium cursor-pointer w-full text-center ${
+                                      og.status === 'paid' ? 'bg-green-50 border-green-300 text-green-700' :
+                                      og.status === 'overdue' ? 'bg-red-50 border-red-300 text-red-600' :
+                                      'bg-gray-50 border-gray-300 text-gray-600'
+                                    }`}
+                                  >
+                                    <option value="pending">Pendiente</option>
+                                    <option value="paid">Pagado</option>
+                                    <option value="overdue">Vencido</option>
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
         </>
